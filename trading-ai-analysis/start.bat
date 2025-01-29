@@ -10,32 +10,65 @@ if not exist .env (
     exit /b 1
 )
 
-:: Aktiviere virtuelle Umgebung
-call venv\Scripts\activate.bat
-
-:: Prüfe ob Aktivierung erfolgreich war
+:: Prüfe Python-Installation
+where python > nul 2>&1
 if errorlevel 1 (
-    echo Fehler beim Aktivieren der virtuellen Umgebung!
-    echo Erstelle neue virtuelle Umgebung...
-    python -m venv venv
-    call venv\Scripts\activate.bat
+    echo [91mFehler: Python wurde nicht gefunden![0m
+    echo Bitte installieren Sie Python und fügen Sie es zum PATH hinzu.
+    pause
+    exit /b 1
 )
 
-:: Prüfe und installiere Requirements
-echo Prüfe Python-Pakete...
-python -c "import pkg_resources, sys; pkg_list = [dist.project_name for dist in pkg_resources.working_set]; required = [line.strip().split('==')[0] for line in open('requirements.txt')]; missing = [pkg for pkg in required if pkg.lower() not in [pkg.lower() for pkg in pkg_list]]; sys.exit(1 if missing else 0)"
+:: Lösche alte virtuelle Umgebung wenn vorhanden und erstelle neue
+if exist venv (
+    echo Virtuelle Umgebung gefunden.
+    set /p DELETE_VENV="Möchten Sie die bestehende virtuelle Umgebung löschen? (j/n): "
+    if /i "%DELETE_VENV%"=="j" (
+        echo Lösche alte virtuelle Umgebung...
+        rmdir /s /q venv
+    ) else (
+        echo Bestehende virtuelle Umgebung wird beibehalten.
+        goto :activate_venv
+    )
+)
 
+echo Erstelle neue virtuelle Umgebung...
+python -m venv venv
+
+:activate_venv
+:: Aktiviere virtuelle Umgebung
+call venv\Scripts\activate.bat
 if errorlevel 1 (
-    echo Installiere fehlende Pakete...
-    echo [92m[1/4][0m Aktualisiere pip...
-    python -m pip install --upgrade pip
-    echo [92m[2/4][0m Installiere PyTorch...
-    pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
-    echo [92m[3/4][0m Installiere weitere Requirements...
-    pip install -r requirements.txt
-    echo [92m[4/4][0m Installation abgeschlossen
-) else (
-    echo [92mAlle Pakete sind bereits installiert[0m
+    echo [91mFehler beim Aktivieren der virtuellen Umgebung![0m
+    pause
+    exit /b 1
+)
+
+:: Aktualisiere pip und installiere Basispakete
+echo [92m[1/5][0m Aktualisiere pip...
+python -m pip install --upgrade pip
+
+echo [92m[2/5][0m Installiere Setuptools und Wheel...
+pip install --upgrade setuptools wheel
+
+echo [92m[3/5][0m Installiere PyTorch...
+pip install torch --index-url https://download.pytorch.org/whl/cu118
+
+echo [92m[4/5][0m Installiere kritische Pakete...
+pip install sqlalchemy pandas numpy python-dotenv psycopg2-binary
+
+echo [92m[5/5][0m Installiere weitere Requirements...
+pip install -r requirements.txt
+
+:: Verifiziere Installation
+echo.
+echo Verifiziere Installation...
+python -c "import torch; import sqlalchemy; import pandas; import numpy" 2>nul
+if errorlevel 1 (
+    echo [91mFehler: Kritische Pakete konnten nicht importiert werden![0m
+    echo Bitte prüfen Sie die Fehlermeldungen oben.
+    pause
+    exit /b 1
 )
 
 :: Zeige Systeminformationen
@@ -49,16 +82,20 @@ echo Virtuelle Umgebung: %VIRTUAL_ENV%
 echo.
 echo GPU-Information:
 echo ---------------
-python -c "import torch; print('CUDA Version:', torch.version.cuda if torch.cuda.is_available() else 'Nicht verfügbar'); print('Verfügbare GPUs:', torch.cuda.device_count() if torch.cuda.is_available() else 0); print('Aktive GPU:', torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'Keine')"
+python -c "import torch; cuda_available = torch.cuda.is_available(); print('CUDA Version:', torch.version.cuda if cuda_available else 'Nicht verfügbar'); print('Verfügbare GPUs:', torch.cuda.device_count() if cuda_available else 0); print('Aktive GPU:', torch.cuda.get_device_name(0) if cuda_available else 'Keine'); import os; os.environ['MODEL_DEVICE'] = 'cuda' if cuda_available else 'cpu'" 2>nul
 if errorlevel 1 (
     echo [93mWarnung: GPU-Status konnte nicht geprüft werden[0m
     echo [93mSystem läuft im CPU-Modus[0m
+    set MODEL_DEVICE=cpu
+) else (
+    for /f "tokens=*" %%i in ('python -c "import torch; print('cuda' if torch.cuda.is_available() else 'cpu')"') do set MODEL_DEVICE=%%i
 )
+echo Verwende Gerät: %MODEL_DEVICE%
 echo.
 
 :: Prüfe Datenbankverbindung
 echo Prüfe Datenbankverbindung...
-python -c "from sqlalchemy import create_engine; from dotenv import load_dotenv; import os; load_dotenv(); params = {'host': os.getenv('DB_HOST', 'localhost'), 'port': os.getenv('DB_PORT', '5432'), 'database': os.getenv('DB_NAME'), 'user': os.getenv('DB_USER'), 'password': os.getenv('DB_PASSWORD')}; engine = create_engine(f'postgresql://{params[\"user\"]}:{params[\"password\"]}@{params[\"host\"]}:{params[\"port\"]}/{params[\"database\"]}'); engine.connect()"
+python -c "from sqlalchemy import create_engine; from dotenv import load_dotenv; import os; load_dotenv(); params = {'host': os.getenv('DB_HOST', 'localhost'), 'port': os.getenv('DB_PORT', '5432'), 'database': os.getenv('DB_NAME'), 'user': os.getenv('DB_USER'), 'password': os.getenv('DB_PASSWORD')}; engine = create_engine(f'postgresql://{params[\"user\"]}:{params[\"password\"]}@{params[\"host\"]}:{params[\"port\"]}/{params[\"database\"]}'); engine.connect()" 2>nul
 if errorlevel 1 (
     echo [91mFehler: Keine Verbindung zur Datenbank möglich![0m
     echo Bitte überprüfen Sie die Datenbankeinstellungen in der .env Datei.

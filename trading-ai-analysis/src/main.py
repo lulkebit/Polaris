@@ -1,5 +1,6 @@
 from models.deepseek_model import DeepseekAnalyzer
 from utils.logger import setup_logger
+from data_processing.data_aggregator import create_combined_market_data
 import schedule
 import time
 import pandas as pd
@@ -29,6 +30,9 @@ def get_database_connection():
 def fetch_latest_data():
     """Holt die neuesten Daten aus der Datenbank"""
     try:
+        # Aktualisiere die kombinierte Markttabelle
+        create_combined_market_data()
+        
         engine = get_database_connection()
         
         # Hole die neuesten Marktdaten
@@ -40,9 +44,14 @@ def fetch_latest_data():
         
         # Hole die neuesten Nachrichten
         news_data = pd.read_sql("""
-            SELECT * FROM news
-            WHERE published_at >= current_date - interval '7 days'
-            ORDER BY published_at DESC
+            SELECT 
+                title,
+                description as content,
+                url,
+                "publishedAt" as published_at
+            FROM news
+            WHERE "publishedAt" >= current_date - interval '7 days'
+            ORDER BY "publishedAt" DESC
         """, engine)
         
         return market_data, news_data
