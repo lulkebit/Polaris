@@ -2,10 +2,11 @@ from data_collection.market_data import fetch_multiple_stocks
 from data_collection.news_data import fetch_news
 from data_processing.clean_market_data import clean_market_data
 from data_processing.news_processor import add_sentiment
-from storage.database import save_to_database
+from storage.database import DatabaseConnection
 from utils.logger import logger
 import schedule
 import time
+import pandas as pd
 
 # Liste der zu überwachenden Aktien
 STOCK_SYMBOLS = [
@@ -25,6 +26,9 @@ def run_pipeline():
     try:
         logger.info("Starte Pipeline-Durchlauf")
         
+        # Initialisiere Datenbankverbindung
+        db = DatabaseConnection()
+        
         # 1. Hole Marktdaten für alle Aktien
         logger.info(f"Hole Marktdaten für {len(STOCK_SYMBOLS)} Aktien")
         market_data_dict = fetch_multiple_stocks(STOCK_SYMBOLS, interval="daily")
@@ -40,7 +44,7 @@ def run_pipeline():
                 
                 # Speichere in eigener Tabelle
                 table_name = f"market_data_{symbol.lower()}"
-                save_to_database(cleaned_market_df, table_name)
+                db.save_to_database(cleaned_market_df, table_name)
                 logger.info(f"Marktdaten für {symbol} in Tabelle {table_name} gespeichert")
                 
             except Exception as e:
@@ -55,7 +59,7 @@ def run_pipeline():
         news_with_sentiment = add_sentiment(news_df)
         logger.info("Sentiment-Analyse für Nachrichten abgeschlossen")
         
-        save_to_database(news_with_sentiment, "news")
+        db.save_to_database(news_with_sentiment, "news")
         logger.info("Nachrichtendaten in Datenbank gespeichert")
         
         logger.info("Pipeline-Durchlauf erfolgreich abgeschlossen")

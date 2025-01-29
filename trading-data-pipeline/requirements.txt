@@ -1,7 +1,14 @@
-pandas==2.0.3
-numpy==1.24.3
+pandas==2.1.4
+numpy==1.26.3
 requests==2.31.0
 python-dotenv==1.0.0
-sqlalchemy==2.0.19
-psycopg2-binary==2.9.7  # Für PostgreSQL
-schedule==1.2.0  # Für zeitgesteuerte Abfragen
+sqlalchemy==2.0.25
+psycopg2-binary==2.9.9  # Für PostgreSQL
+schedule==1.2.1  # Für zeitgesteuerte Abfragen
+torch==2.1.2
+transformers==4.36.2
+accelerate==0.26.1  # Für optimierte Modellausführung
+scikit-learn==1.3.2  # Für Datenverarbeitung
+python-dateutil==2.9.0.post0  # Für Datums- und Zeitverarbeitung
+pytz==2024.1  # Für Zeitzonen-Handling
+tqdm==4.66.2  # Für Fortschrittsbalken
