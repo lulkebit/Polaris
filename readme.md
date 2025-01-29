@@ -4,6 +4,43 @@
 
 Polaris ist eine fortschrittliche Platform für automatisiertes Trading, die Marktdaten und Nachrichtenanalyse kombiniert. Das System besteht aus vier Hauptkomponenten: einer Datenpipeline für die Sammlung und Verarbeitung von Handelsdaten, einem KI-Analysemodul für fortgeschrittene Marktanalysen, einem Trading-API-Server für die Handelsausführung und einem Frontend für die Benutzerinteraktion.
 
+## Roadmap & Entwicklung
+
+```mermaid
+mindmap
+  root((Polaris))
+    Trading
+      Backtesting System
+      Multi-Asset Support
+      Risikomanagement
+    KI & Analyse
+      Modell-Optimierung
+      Sentiment Analyse
+      Predictive Analytics
+    Frontend
+      Trading Dashboard
+      Portfolio Management
+      Mobile Version
+    Infrastruktur
+      Cloud Deployment
+      Monitoring
+      Sicherheit
+```
+
+### Aktuelle Prioritäten
+
+-   🎯 Backtesting Framework & Validierung
+-   🔒 Sicherheitsinfrastruktur
+-   📊 Trading Dashboard
+-   🤖 KI-Modell-Optimierung
+
+### In Entwicklung
+
+-   🚀 Cloud Infrastructure
+-   📡 Daten-Pipeline
+-   🔐 Basis-Sicherheit
+-   📱 Mobile Support
+
 ## Hauptfunktionen
 
 -   🔄 Echtzeit-Marktdaten-Collection
@@ -62,108 +99,6 @@ polaris/
     ├── package.json        # Node.js-Abhängigkeiten
     └── .env               # Umgebungsvariablen
 ```
-
-## Roadmap
-
-```mermaid
-mindmap
-  root((Polaris Platform))
-    Infrastruktur
-      Cloud Deployment
-        AWS Setup
-        Skalierbarkeit
-        Load Balancing
-      Monitoring System
-        Performance Tracking
-        Alerting
-        Logging
-      Backup & Recovery
-        Automatische Backups
-        Disaster Recovery
-        Datenreplikation
-    Trading System
-      Backtesting
-        Historische Daten
-        Strategie-Tests
-        Performance-Analyse
-      Strategien
-        Multi-Asset Trading
-        Portfolio-Optimierung
-        Risikomanagement
-      Performance
-        Latenzoptimierung
-        Durchsatzsteigerung
-        Ressourceneffizienz
-    KI & Analyse
-      Modell-Optimierung
-        Feintuning
-        Hyperparameter
-        Validierung
-      Sentiment Analyse
-        News Integration
-        Social Media
-        Marktsentiment
-      Predictive Analytics
-        Zeitreihenanalyse
-        Pattern Recognition
-        Anomalie-Erkennung
-    Frontend
-      Dashboard
-        Echtzeit-Charts
-        Performance-Metriken
-        Alerts
-      Portfolio Management
-        Asset-Übersicht
-        Trade-Historie
-        Risiko-Metriken
-      Mobile Version
-        Responsive Design
-        Push-Notifications
-        Touch-Optimierung
-    Sicherheit
-      Penetration Testing
-        Vulnerability Scans
-        Security Audits
-        Code Reviews
-      Compliance
-        Datenschutz
-        Regulierung
-        Dokumentation
-      Zertifizierung
-        Sicherheitsstandards
-        Best Practices
-        Externe Audits
-```
-
-## Entwicklungsprioritäten
-
-### Kritische Komponenten
-
--   🎯 Backtesting Framework & Validierung
--   🔒 Sicherheitsinfrastruktur & Compliance
--   📊 Kernfunktionen des Trading-Dashboards
--   ⚡ Performance-Optimierung der Trading-Engine
-
-### Wichtige Erweiterungen
-
--   🤖 KI-Modell-Verbesserungen & Validierung
--   📱 Mobile Unterstützung & Responsive Design
--   🌐 Multi-Exchange-Integration
--   📈 Erweiterte Analysetools & Reporting
-
-### Zusätzliche Features
-
--   🔄 Automatische Strategie-Optimierung
--   🤝 Social Trading & Community Features
--   🌍 Internationalisierung & Lokalisierung
--   🎨 UI/UX-Verfeinerungen
-
-### In Entwicklung
-
--   🚀 Cloud Infrastructure Setup
--   📊 Dashboard Grundfunktionen
--   🔐 Basis-Sicherheitsfunktionen
--   📡 Daten-Pipeline-Erweiterungen
 
 ## Lizenz
 
