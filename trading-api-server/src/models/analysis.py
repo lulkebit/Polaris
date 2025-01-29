@@ -41,7 +41,7 @@ class AIAnalysis(Base):
     __tablename__ = "ai_analysis"
     __table_args__ = {'extend_existing': True}
 
-    timestamp = Column(DateTime, primary_key=True)
+    timestamp = Column(String, primary_key=True)
     analysis = Column(String)
 
     def __repr__(self):

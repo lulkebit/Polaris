@@ -41,12 +41,14 @@ async def get_analyses_by_date(date: str, db: Session = Depends(get_db)):
     Holt Analysen für ein bestimmtes Datum
     """
     try:
+        # Konvertiere das Datum in das erwartete Format
         date_obj = datetime.strptime(date, "%Y-%m-%d")
-        next_day = date_obj + timedelta(days=1)
+        date_str = date_obj.strftime("%Y-%m-%d")
+        next_day = (date_obj + timedelta(days=1)).strftime("%Y-%m-%d")
         
         analyses = (
             db.query(AIAnalysis)
-            .filter(AIAnalysis.timestamp >= date_obj)
+            .filter(AIAnalysis.timestamp >= date_str)
             .filter(AIAnalysis.timestamp < next_day)
             .order_by(AIAnalysis.timestamp.desc())
             .all()
