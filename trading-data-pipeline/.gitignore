@@ -1,0 +1,66 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtuelle Umgebungen
+venv/
+env/
+ENV/
+.env
+
+# IDEs und Editoren
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Logs und Datenbanken
+*.log
+pipeline.log
+*.sqlite
+*.db
+*.sqlite3
+
+# Vertrauliche Daten
+.env
+.env.*
+credentials/
+secrets/
+
+# Docker
+.docker/
+docker-compose.override.yml
+
+# Temporäre Dateien
+tmp/
+temp/
+.temp/
+*.tmp
+
+# Projektspezifische Dateien
+trading-data/
+market_data/
+news_data/
+*.csv
+*.json
+*.xlsx
+*.pkl 
