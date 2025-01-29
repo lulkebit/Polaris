@@ -1,50 +1,81 @@
-# React + TypeScript + Vite
+# Polaris Trading Frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+## Übersicht
 
-Currently, two official plugins are available:
+Dies ist die Frontend-Komponente der Polaris Trading Platform. Sie bietet eine moderne und intuitive Benutzeroberfläche für die Überwachung und Steuerung des automatisierten Handelssystems.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react/README.md) uses [Babel](https://babeljs.io/) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+## Technologie-Stack
 
-## Expanding the ESLint configuration
+-   React 18
+-   TypeScript
+-   Vite
+-   TailwindCSS
+-   React Query
+-   React Router
+-   Recharts für Visualisierungen
 
-If you are developing a production application, we recommend updating the configuration to enable type aware lint rules:
+## Projektstruktur
 
-- Configure the top-level `parserOptions` property like this:
-
-```js
-export default tseslint.config({
-  languageOptions: {
-    // other options...
-    parserOptions: {
-      project: ['./tsconfig.node.json', './tsconfig.app.json'],
-      tsconfigRootDir: import.meta.dirname,
-    },
-  },
-})
+```
+trading-frontend/
+├── src/
+│   ├── components/     # Wiederverwendbare UI-Komponenten
+│   ├── pages/         # Seitenkomponenten
+│   ├── services/      # API-Integration und Dienste
+│   ├── hooks/         # Custom React Hooks
+│   ├── utils/         # Hilfsfunktionen
+│   ├── types/         # TypeScript Definitionen
+│   └── assets/        # Statische Ressourcen
+├── public/           # Öffentliche Dateien
+└── package.json     # Projektabhängigkeiten
 ```
 
-- Replace `tseslint.configs.recommended` to `tseslint.configs.recommendedTypeChecked` or `tseslint.configs.strictTypeChecked`
-- Optionally add `...tseslint.configs.stylisticTypeChecked`
-- Install [eslint-plugin-react](https://github.com/jsx-eslint/eslint-plugin-react) and update the config:
+## Installation
 
-```js
-// eslint.config.js
-import react from 'eslint-plugin-react'
+1. Node.js (Version 18 oder höher) installieren
+2. Abhängigkeiten installieren:
+    ```bash
+    npm install
+    ```
+3. `.env` Datei konfigurieren:
+    ```
+    VITE_API_URL=http://localhost:8000
+    ```
 
-export default tseslint.config({
-  // Set the react version
-  settings: { react: { version: '18.3' } },
-  plugins: {
-    // Add the react plugin
-    react,
-  },
-  rules: {
-    // other rules...
-    // Enable its recommended rules
-    ...react.configs.recommended.rules,
-    ...react.configs['jsx-runtime'].rules,
-  },
-})
+## Entwicklung
+
+Entwicklungsserver starten:
+
+```bash
+npm run dev
 ```
+
+## Build
+
+Produktions-Build erstellen:
+
+```bash
+npm run build
+```
+
+## Features
+
+-   📊 Echtzeit-Marktdaten-Visualisierung
+-   💼 Portfolio-Übersicht und -Management
+-   📈 Trading-Strategien-Konfiguration
+-   🔔 Benachrichtigungssystem
+-   📱 Responsive Design
+
+## API-Integration
+
+Die Frontend-Anwendung kommuniziert mit dem Trading-API-Server über RESTful Endpunkte. Die Basis-URL wird in der `.env` Datei konfiguriert.
+
+## Sicherheit
+
+-   🔒 JWT-basierte Authentifizierung
+-   🛡️ CORS-Konfiguration
+-   🔐 Sichere API-Key-Verwaltung
+
+## Lizenz
+
+Proprietär - Alle Rechte vorbehalten
