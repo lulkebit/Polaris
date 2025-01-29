@@ -1,0 +1,76 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtuelle Umgebungen
+venv/
+env/
+ENV/
+.env
+
+# IDEs und Editoren
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Logs und Datenbanken
+logs/
+*.log
+*.sqlite
+*.db
+*.sqlite3
+
+# Vertrauliche Daten
+.env
+.env.*
+credentials/
+secrets/
+
+# Temporäre Dateien
+tmp/
+temp/
+.temp/
+*.tmp
+
+# KI-spezifische Dateien
+models/
+*.pt
+*.pth
+*.onnx
+*.bin
+*.h5
+checkpoints/
+runs/
+wandb/
+tensorboard/
+pretrained/
+
+# Projektspezifische Dateien
+analysis_results/
+predictions/
+*.csv
+*.json
+*.xlsx
+*.pkl
+*.npy
+*.npz 
