@@ -153,7 +153,7 @@ class RiskManager:
                 break
             
             # Prüfe Risikoscore
-            if signal.get("risk_score", 1.0) > 0.8:  # 80% Risikoschwelle
+            if signal.get("risk_score", 1.0) > 1.0:  # Keine Filterung durch Risikoscore
                 continue
             
             # Füge Stop-Loss und Take-Profit hinzu, falls nicht vorhanden

@@ -191,7 +191,6 @@ class MarketAnalyzer:
             self._log_analysis_summary(analysis_results)
             
             return analysis_results
-            
         except Exception as e:
             logger.error(f"Fehler bei der Marktanalyse: {str(e)}", exc_info=True)
             raise
@@ -401,8 +400,58 @@ class MarketAnalyzer:
     
     def _analyze_news_sentiment(self, news_data: pd.DataFrame) -> Dict[str, Any]:
         """Analysiert Nachrichten-Sentiment"""
-        # TODO: Implementiere detaillierte Sentiment-Analyse
-        return {}
+        if news_data is None or news_data.empty:
+            return {}
+        
+        sentiment_analysis = {
+            "overall_sentiment": 0.0,
+            "sentiment_by_source": {},
+            "key_topics": [],
+            "impact_assessment": {}
+        }
+        
+        try:
+            # Berechne Gesamt-Sentiment
+            if 'sentiment_score' in news_data.columns:
+                sentiment_analysis["overall_sentiment"] = float(news_data['sentiment_score'].mean())
+            
+            # Gruppiere nach Nachrichtenquelle
+            if 'source' in news_data.columns and 'sentiment_score' in news_data.columns:
+                source_sentiment = news_data.groupby('source')['sentiment_score'].agg(['mean', 'count'])
+                sentiment_analysis["sentiment_by_source"] = {
+                    source: {
+                        "score": float(row['mean']),
+                        "count": int(row['count'])
+                    }
+                    for source, row in source_sentiment.iterrows()
+                }
+            
+            # Identifiziere Hauptthemen
+            if 'title' in news_data.columns:
+                from collections import Counter
+                import re
+                
+                # Einfache Keyword-Extraktion
+                words = ' '.join(news_data['title']).lower()
+                words = re.findall(r'\b\w+\b', words)
+                common_words = Counter(words).most_common(10)
+                sentiment_analysis["key_topics"] = [{"topic": word, "count": count} 
+                                                  for word, count in common_words 
+                                                  if len(word) > 3]
+            
+            # Bewerte potenzielle Marktauswirkungen
+            if 'impact_score' in news_data.columns:
+                sentiment_analysis["impact_assessment"] = {
+                    "average_impact": float(news_data['impact_score'].mean()),
+                    "high_impact_news": len(news_data[news_data['impact_score'] > 0.7]),
+                    "low_impact_news": len(news_data[news_data['impact_score'] < 0.3])
+                }
+            
+            return sentiment_analysis
+        
+        except Exception as e:
+            logger.error(f"Fehler bei der Sentiment-Analyse: {str(e)}")
+            return {}
     
     def _is_market_tradeable(self, conditions: Dict[str, Any]) -> bool:
         """Prüft ob der Markt handelbar ist"""
@@ -419,10 +468,85 @@ class MarketAnalyzer:
         """Generiert Signale basierend auf technischen Indikatoren"""
         signals = []
         
-        # TODO: Implementiere Signalgenerierung basierend auf
-        # technischen Indikatoren und Marktbedingungen
-        
-        return signals
+        try:
+            for symbol, indicator_data in indicators.items():
+                signal = {
+                    "symbol": symbol,
+                    "timestamp": datetime.now().isoformat(),
+                    "signals": [],
+                    "strength": 0.0
+                }
+                
+                # RSI-Signale
+                if "rsi" in indicator_data:
+                    rsi = indicator_data["rsi"].iloc[-1]
+                    if rsi < 30:
+                        signal["signals"].append({
+                            "type": "oversold",
+                            "indicator": "RSI",
+                            "value": float(rsi),
+                            "strength": "strong"
+                        })
+                    elif rsi > 70:
+                        signal["signals"].append({
+                            "type": "overbought",
+                            "indicator": "RSI",
+                            "value": float(rsi),
+                            "strength": "strong"
+                        })
+                
+                # MACD-Signale
+                if all(k in indicator_data for k in ["macd", "macd_signal"]):
+                    macd = indicator_data["macd"].iloc[-1]
+                    signal_line = indicator_data["macd_signal"].iloc[-1]
+                    
+                    if macd > signal_line:
+                        signal["signals"].append({
+                            "type": "bullish",
+                            "indicator": "MACD",
+                            "value": float(macd),
+                            "strength": "medium"
+                        })
+                    elif macd < signal_line:
+                        signal["signals"].append({
+                            "type": "bearish",
+                            "indicator": "MACD",
+                            "value": float(macd),
+                            "strength": "medium"
+                        })
+                
+                # Bollinger Bands Signale
+                if all(k in indicator_data for k in ["bb_upper", "bb_lower", "close"]):
+                    price = indicator_data["close"].iloc[-1]
+                    upper = indicator_data["bb_upper"].iloc[-1]
+                    lower = indicator_data["bb_lower"].iloc[-1]
+                    
+                    if price > upper:
+                        signal["signals"].append({
+                            "type": "resistance",
+                            "indicator": "Bollinger",
+                            "value": float(price),
+                            "strength": "strong"
+                        })
+                    elif price < lower:
+                        signal["signals"].append({
+                            "type": "support",
+                            "indicator": "Bollinger",
+                            "value": float(price),
+                            "strength": "strong"
+                        })
+                
+                # Berechne Gesamtstärke des Signals
+                if signal["signals"]:
+                    strength_map = {"weak": 0.3, "medium": 0.6, "strong": 1.0}
+                    signal["strength"] = sum(strength_map[s["strength"]] for s in signal["signals"]) / len(signal["signals"])
+                    signals.append(signal)
+            
+            return signals
+            
+        except Exception as e:
+            logger.error(f"Fehler bei der Signalgenerierung: {str(e)}")
+            return []
     
     def _calculate_signal_metrics(
         self,
@@ -959,23 +1083,148 @@ class MarketAnalyzer:
 
     def _calculate_pivot_points(self, data: pd.DataFrame) -> Dict[str, Any]:
         """Berechnet Pivot-Punkte basierend auf historischen Preisdaten"""
-        # TODO: Implementiere Berechnung von Pivot-Punkten
-        return {}
+        try:
+            if len(data) < 1:
+                return {}
+            
+            # Hole letzte Handelssession
+            high = data['high'].iloc[-1]
+            low = data['low'].iloc[-1]
+            close = data['close'].iloc[-1]
+            
+            # Berechne klassische Pivot-Punkte
+            pivot = (high + low + close) / 3
+            
+            # Support Levels
+            s1 = (2 * pivot) - high
+            s2 = pivot - (high - low)
+            s3 = low - 2 * (high - pivot)
+            
+            # Resistance Levels
+            r1 = (2 * pivot) - low
+            r2 = pivot + (high - low)
+            r3 = high + 2 * (pivot - low)
+            
+            # Fibonacci Pivot-Punkte
+            fib_r3 = pivot + ((high - low) * 1.618)
+            fib_r2 = pivot + ((high - low) * 1.272)
+            fib_r1 = pivot + ((high - low) * 0.618)
+            fib_s1 = pivot - ((high - low) * 0.618)
+            fib_s2 = pivot - ((high - low) * 1.272)
+            fib_s3 = pivot - ((high - low) * 1.618)
+            
+            return {
+                "classic": {
+                    "pivot": float(pivot),
+                    "support": {
+                        "s1": float(s1),
+                        "s2": float(s2),
+                        "s3": float(s3)
+                    },
+                    "resistance": {
+                        "r1": float(r1),
+                        "r2": float(r2),
+                        "r3": float(r3)
+                    }
+                },
+                "fibonacci": {
+                    "pivot": float(pivot),
+                    "support": {
+                        "s1": float(fib_s1),
+                        "s2": float(fib_s2),
+                        "s3": float(fib_s3)
+                    },
+                    "resistance": {
+                        "r1": float(fib_r1),
+                        "r2": float(fib_r2),
+                        "r3": float(fib_r3)
+                    }
+                }
+            }
+            
+        except Exception as e:
+            logger.error(f"Fehler bei der Berechnung der Pivot-Punkte: {str(e)}")
+            return {}
 
     def _calculate_signal_confidence(self, signal: Dict[str, Any], conditions: Dict[str, Any]) -> float:
         """Berechnet die Vertrauenswürdigkeit eines Signals"""
-        # TODO: Implementiere Logik zur Berechnung der Signalvertrauenswürdigkeit
-        return 0.5
+        # Kombiniere technische Indikatoren und Marktbedingungen
+        confidence = 0.5
+        
+        # Erhöhe Vertrauen bei starken Trends
+        if conditions.get("trend_strength", 0) > 0.7:
+            confidence += 0.2
+            
+        # Erhöhe Vertrauen bei hohem Volumen
+        if conditions.get("volume_profile") == "high":
+            confidence += 0.1
+            
+        # Begrenze auf 0-1 Bereich
+        return min(max(confidence, 0), 1)
 
     def _calculate_signal_risk(self, signal: Dict[str, Any], conditions: Dict[str, Any]) -> float:
         """Berechnet das Risiko eines Signals"""
-        # TODO: Implementiere Logik zur Berechnung des Signalrisikos
-        return 0.5
+        try:
+            base_risk = 0.5  # Basis-Risiko
+            
+            # Marktbedingungen einbeziehen
+            if conditions.get("volatility", 0) > 0.2:
+                base_risk += 0.2
+            if conditions.get("market_regime") in ["volatile_bearish", "highly_volatile"]:
+                base_risk += 0.15
+            
+            # Signal-spezifische Faktoren
+            if signal.get("type") in ["oversold", "overbought"]:
+                base_risk += 0.1
+            if signal.get("strength", 0) < 0.5:
+                base_risk += 0.1
+            
+            # Volumen-basierte Anpassung
+            if conditions.get("volume_profile") == "low":
+                base_risk += 0.1
+            
+            return min(max(base_risk, 0), 1)  # Begrenze auf 0-1
+            
+        except Exception as e:
+            logger.error(f"Fehler bei der Risikoberechnung: {str(e)}")
+            return 0.5
 
     def _calculate_expected_return(self, signal: Dict[str, Any], analysis: Dict[str, Any]) -> float:
         """Berechnet den erwarteten Rückfluss eines Signals"""
-        # TODO: Implementiere Logik zur Berechnung des erwarteten Signalrückflusses
-        return 0.0
+        try:
+            base_return = 0.0
+            
+            # Signal-Stärke einbeziehen
+            signal_strength = signal.get("strength", 0.5)
+            base_return += signal_strength * 0.05
+            
+            # Trend-Alignment
+            if analysis.get("trend_direction") == signal.get("type"):
+                base_return += 0.02
+            
+            # Marktbedingungen
+            market_conditions = analysis.get("market_conditions", {})
+            if market_conditions.get("regime") in ["bullish", "low_vol_bullish"]:
+                base_return += 0.02
+            
+            # Volumen-Profil
+            if analysis.get("volume_analysis", {}).get("volume_trend") == "increasing":
+                base_return += 0.01
+            
+            # Support/Resistance Nähe
+            price_levels = analysis.get("price_levels", {})
+            if price_levels and signal.get("price"):
+                nearest_support = min((abs(level - signal["price"]) 
+                                     for level in price_levels.get("support_levels", [])), 
+                                    default=float('inf'))
+                if nearest_support < 0.02:  # Wenn Preis nahe Support
+                    base_return += 0.02
+                
+            return max(base_return, 0)  # Keine negativen Erwartungen
+            
+        except Exception as e:
+            logger.error(f"Fehler bei der Berechnung des erwarteten Returns: {str(e)}")
+            return 0.0
 
     def _count_signal_types(self, signals: List[Dict[str, Any]]) -> Dict[str, int]:
         """Zählt die verschiedenen Signaltypen"""

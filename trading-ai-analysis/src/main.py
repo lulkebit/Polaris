@@ -77,6 +77,16 @@ class TradingAIAnalysis:
                     }
                 )
             
+            # Logge Pipeline-Ergebnisse
+            self.logger.info(
+                "Analyse-Pipeline Ergebnisse",
+                extra={
+                    "num_signals": len(analysis_results.trade_signals) if analysis_results.trade_signals else 0,
+                    "pipeline_steps": analysis_results.pipeline_steps,
+                    "timestamp": datetime.now().isoformat()
+                }
+            )
+            
             analysis_results.metrics = {
                 'performance': analysis_results.performance_metrics,
                 'risk': analysis_results.risk_metrics

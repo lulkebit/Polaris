@@ -50,7 +50,7 @@ class BacktestResults:
     final_portfolio_value: float
     final_cash_position: float
     final_positions: Dict[str, Any]
-    sector_allocation: Dict[str, float]
+    pipeline_steps: List[Dict[str, Any]]
 
 class Backtester:
     def __init__(self, config: Optional[BacktestConfig] = None):

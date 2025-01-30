@@ -167,6 +167,20 @@ if "%PERFORMANCE_MODE%"=="1" (
 )
 echo.
 
+:: Frage nach Debug-Modus
+echo.
+echo Debug-Modus aktivieren? (y/n)
+set /p DEBUG_MODE="Ihre Wahl (y/n): "
+
+if "%DEBUG_MODE%"=="y" (
+    set DEBUG_MODE=true
+    echo Debug-Modus aktiviert
+) else (
+    set DEBUG_MODE=false
+    echo Debug-Modus deaktiviert
+)
+echo.
+
 :: Starte KI-Analyse
 echo Starte KI-Analyse-System...
 echo - Deepseek 1.3B Modell wird geladen
