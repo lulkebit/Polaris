@@ -107,13 +107,28 @@ echo [92mDatenbankverbindung erfolgreich hergestellt[0m
 echo.
 
 :: Frage nach Performance-Modus
-set /p PERFORMANCE_MODE="Möchten Sie den Low-Performance-Modus aktivieren? (j/n): "
-if /i "%PERFORMANCE_MODE%"=="j" (
-    set PERFORMANCE_MODE=low
-    echo Low-Performance-Modus aktiviert
-) else (
+echo Wählen Sie den Performance-Modus:
+echo [1] Normal     (Beste Qualität, hoher Ressourcenverbrauch)
+echo [2] Low        (Gute Qualität, reduzierter Ressourcenverbrauch)
+echo [3] Ultra-Low  (Basis-Qualität, minimaler Ressourcenverbrauch)
+echo [4] Auto       (Automatische Anpassung basierend auf System)
+set /p PERFORMANCE_MODE="Ihre Wahl (1-4): "
+
+if "%PERFORMANCE_MODE%"=="1" (
     set PERFORMANCE_MODE=normal
     echo Normal-Performance-Modus aktiviert
+) else if "%PERFORMANCE_MODE%"=="2" (
+    set PERFORMANCE_MODE=low
+    echo Low-Performance-Modus aktiviert
+) else if "%PERFORMANCE_MODE%"=="3" (
+    set PERFORMANCE_MODE=ultra-low
+    echo Ultra-Low-Performance-Modus aktiviert
+) else if "%PERFORMANCE_MODE%"=="4" (
+    set PERFORMANCE_MODE=auto
+    echo Automatischer Performance-Modus aktiviert
+) else (
+    set PERFORMANCE_MODE=normal
+    echo Ungültige Eingabe - Normal-Performance-Modus aktiviert
 )
 echo.
 
