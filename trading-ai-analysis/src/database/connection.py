@@ -1,114 +1,130 @@
 import os
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, scoped_session
+from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.pool import QueuePool
 import logging
-from typing import Optional
+from typing import Optional, Generator
 from contextlib import contextmanager
 from dotenv import load_dotenv
+import time
+from sqlalchemy.exc import SQLAlchemyError, OperationalError
 
 from .schema import Base
+from config.settings import DATABASE_CONFIG
+from utils.logging_config import get_logger
 
 class DatabaseConnection:
-    _instance = None
-    
-    def __new__(cls):
-        if cls._instance is None:
-            cls._instance = super(DatabaseConnection, cls).__new__(cls)
-            cls._instance._initialized = False
-        return cls._instance
+    """Verwaltet Datenbankverbindungen mit Connection Pooling"""
     
     def __init__(self):
-        if self._initialized:
-            return
-            
-        self.logger = logging.getLogger(__name__)
+        self.logger = get_logger()
         self._engine = None
         self._session_factory = None
-        self._initialized = True
-        
-    def initialize(self, connection_string: Optional[str] = None):
+        self.initialize()
+    
+    def initialize(self) -> None:
         """Initialisiert die Datenbankverbindung"""
-        # Lade Umgebungsvariablen
-        load_dotenv()
-        
-        if not connection_string:
-            # Verwende die gleichen Parameter wie in start.bat
-            params = {
-                'host': os.getenv('DB_HOST', 'localhost'),
-                'port': os.getenv('DB_PORT', '5432'),
-                'database': os.getenv('DB_NAME'),
-                'user': os.getenv('DB_USER'),
-                'password': os.getenv('DB_PASSWORD')
-            }
-            
-            connection_string = f'postgresql://{params["user"]}:{params["password"]}@{params["host"]}:{params["port"]}/{params["database"]}'
-            
-        if not connection_string:
-            raise ValueError("Keine Datenbankverbindungs-URL gefunden")
-            
         try:
+            # Erstelle Connection String
+            db_url = (
+                f"postgresql://{DATABASE_CONFIG['user']}:{DATABASE_CONFIG['password']}"
+                f"@{DATABASE_CONFIG['host']}:{DATABASE_CONFIG['port']}"
+                f"/{DATABASE_CONFIG['database']}"
+            )
+            
+            # Konfiguriere Connection Pool
             self._engine = create_engine(
-                connection_string,
+                db_url,
                 poolclass=QueuePool,
                 pool_size=5,
                 max_overflow=10,
                 pool_timeout=30,
-                pool_recycle=1800
+                pool_recycle=1800,  # Recycle Connections nach 30 Minuten
+                echo=False
             )
             
-            # Erstelle alle Tabellen
-            Base.metadata.create_all(self._engine)
-            
-            self._session_factory = scoped_session(
-                sessionmaker(
-                    autocommit=False,
-                    autoflush=False,
-                    bind=self._engine
-                )
+            # Erstelle Session Factory
+            self._session_factory = sessionmaker(
+                bind=self._engine,
+                expire_on_commit=False
             )
             
-            # Teste die Verbindung
-            self.test_connection()
-            self.logger.info("Datenbankverbindung erfolgreich initialisiert")
+            self.logger.logger.info(
+                "Datenbankverbindung initialisiert",
+                extra={"host": DATABASE_CONFIG['host'], "database": DATABASE_CONFIG['database']}
+            )
             
         except Exception as e:
-            self.logger.error(f"Fehler bei der Datenbankinitialisierung: {str(e)}")
+            self.logger.logger.error(
+                f"Fehler bei der Initialisierung der Datenbankverbindung: {str(e)}",
+                exc_info=True
+            )
             raise
     
     @contextmanager
-    def get_session(self):
-        """Stellt eine Datenbanksession im Context Manager bereit"""
+    def get_session(self) -> Generator[Session, None, None]:
+        """Context Manager für Datenbanksessions mit automatischer Fehlerbehandlung"""
         session = self._session_factory()
+        max_retries = 3
+        retry_count = 0
+        
         try:
             yield session
-            session.commit()
-        except Exception as e:
+            
+        except OperationalError as e:
+            # Versuche bei Verbindungsproblemen einen Retry
+            while retry_count < max_retries:
+                try:
+                    retry_count += 1
+                    time.sleep(1)  # Warte kurz vor dem Retry
+                    
+                    # Schließe alte Session und erstelle neue
+                    session.close()
+                    session = self._session_factory()
+                    
+                    yield session
+                    break
+                    
+                except OperationalError as retry_error:
+                    if retry_count == max_retries:
+                        self.logger.logger.error(
+                            f"Maximale Anzahl an Retries erreicht: {str(retry_error)}",
+                            exc_info=True
+                        )
+                        raise
+                    
+                    self.logger.logger.warning(
+                        f"Datenbankverbindung fehlgeschlagen, Retry {retry_count}/{max_retries}"
+                    )
+            
+        except SQLAlchemyError as e:
+            self.logger.logger.error(f"Datenbankfehler: {str(e)}", exc_info=True)
             session.rollback()
             raise
+            
+        except Exception as e:
+            self.logger.logger.error(f"Unerwarteter Fehler: {str(e)}", exc_info=True)
+            session.rollback()
+            raise
+            
         finally:
             session.close()
     
-    def close(self):
+    def close(self) -> None:
         """Schließt alle Datenbankverbindungen"""
-        if self._session_factory:
-            self._session_factory.remove()
         if self._engine:
             self._engine.dispose()
-            
-    @property
-    def engine(self):
-        """Gibt die Engine-Instanz zurück"""
-        if not self._engine:
-            raise RuntimeError("Datenbankverbindung wurde noch nicht initialisiert")
-        return self._engine
-        
-    def test_connection(self) -> bool:
-        """Testet die Datenbankverbindung"""
+            self.logger.logger.info("Datenbankverbindungen geschlossen")
+    
+    def check_connection(self) -> bool:
+        """Überprüft die Datenbankverbindung"""
         try:
             with self.get_session() as session:
                 session.execute("SELECT 1")
-            return True
+                return True
         except Exception as e:
-            self.logger.error(f"Verbindungstest fehlgeschlagen: {str(e)}")
+            self.logger.logger.error(
+                f"Verbindungstest fehlgeschlagen: {str(e)}",
+                exc_info=True
+            )
             return False 

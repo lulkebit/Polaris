@@ -22,18 +22,20 @@ if errorlevel 1 (
 :: Lösche alte virtuelle Umgebung wenn vorhanden und erstelle neue
 if exist venv (
     echo Virtuelle Umgebung gefunden.
-    set /p DELETE_VENV="Möchten Sie die bestehende virtuelle Umgebung löschen? (j/n): "
-    if /i "%DELETE_VENV%"=="j" (
-        echo Lösche alte virtuelle Umgebung...
-        rmdir /s /q venv
-    ) else (
+    choice /c jn /m "Möchten Sie die bestehende virtuelle Umgebung löschen?"
+    if errorlevel 2 (
         echo Bestehende virtuelle Umgebung wird beibehalten.
         goto :activate_venv
+    ) else (
+        echo Lösche alte virtuelle Umgebung...
+        rmdir /s /q venv
+        echo Erstelle neue virtuelle Umgebung...
+        python -m venv venv
     )
+) else (
+    echo Erstelle neue virtuelle Umgebung...
+    python -m venv venv
 )
-
-echo Erstelle neue virtuelle Umgebung...
-python -m venv venv
 
 :activate_venv
 :: Aktiviere virtuelle Umgebung
@@ -44,20 +46,34 @@ if errorlevel 1 (
     exit /b 1
 )
 
+:: Installiere pip manuell
+::echo [92m[1/7][0m Installiere pip...
+::curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py
+::python get-pip.py --force-reinstall
+::del get-pip.py
+
 :: Aktualisiere pip und installiere Basispakete
-echo [92m[1/5][0m Aktualisiere pip...
+echo [92m[2/7][0m Aktualisiere pip...
 python -m pip install --upgrade pip
 
-echo [92m[2/5][0m Installiere Setuptools und Wheel...
-pip install --upgrade setuptools wheel
+echo [92m[3/7][0m Installiere Build-Tools...
+python -m pip install --upgrade setuptools wheel build pip-tools
+python -m pip install --upgrade pip setuptools
 
-echo [92m[3/5][0m Installiere PyTorch...
+echo [92m[4/7][0m Installiere grundlegende Dependencies...
+pip install requests packaging pyyaml regex huggingface-hub safetensors
+
+echo [92m[5/7][0m Installiere PyTorch...
 pip install torch --index-url https://download.pytorch.org/whl/cu118
 
-echo [92m[4/5][0m Installiere kritische Pakete...
-pip install sqlalchemy pandas numpy python-dotenv psycopg2-binary
+echo [92m[6/7][0m Installiere kritische Pakete...
+pip install sqlalchemy pandas numpy python-dotenv psycopg2-binary transformers
 
-echo [92m[5/5][0m Installiere weitere Requirements...
+echo [92m[7/7][0m Installiere weitere Requirements...
+pip install scikit-learn plotly schedule pytest black mypy python-dateutil requests
+:: Installiere ta mit allen Dependencies
+pip install numpy pandas
+pip install ta
 pip install -r requirements.txt
 
 :: Verifiziere Installation
@@ -117,7 +133,7 @@ if "%ANALYSIS_MODE%"=="1" (
     set ANALYSIS_MODE=new
     echo Neue Analyse wird durchgeführt...
 ) else if "%ANALYSIS_MODE%"=="2" (
-    set ANALYSIS_MODE=existing
+    set ANALYSIS_MODE=last
     echo Vorhandene Daten werden verwendet...
 ) else (
     set ANALYSIS_MODE=new

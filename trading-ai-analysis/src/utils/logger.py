@@ -1,6 +1,7 @@
 import logging
 import os
 from datetime import datetime
+import json
 
 # ANSI Escape Codes für Farben
 COLORS = {
@@ -113,5 +114,24 @@ def setup_logger(name, log_to_console=True):
     logger.model_log = model_log.__get__(logger)
     logger.analysis_log = analysis_log.__get__(logger)
     logger.db_log = db_log.__get__(logger)
+    
+    # Add trade analysis logging method
+    def log_trade_analysis(self, analysis_data: dict, level: int = logging.INFO) -> None:
+        """Logs trade analysis data in a structured format"""
+        try:
+            log_entry = {
+                'timestamp': datetime.now().isoformat(),
+                'type': 'trade_analysis',
+                'data': analysis_data
+            }
+            
+            # Log as JSON for structured logging
+            self.log(level, json.dumps(log_entry), extra={'analysis_info': True})
+            
+        except Exception as e:
+            self.error(f"Fehler beim Loggen der Trade-Analyse: {str(e)}")
+
+    # Add the new method to the logger
+    logger.log_trade_analysis = log_trade_analysis.__get__(logger)
     
     return logger 

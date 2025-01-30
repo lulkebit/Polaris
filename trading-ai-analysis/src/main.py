@@ -1,203 +1,177 @@
 import argparse
-import logging
 from pathlib import Path
 from datetime import datetime
-import pandas as pd
+import sys
+from typing import Optional
 
+from config.settings import (
+    PERFORMANCE_MODES,
+    ANALYSIS_CONFIG,
+    TRADING_CONFIG,
+    RESULTS_DIR,
+    ANALYSIS_HISTORY_DIR
+)
+from utils.logging_config import setup_logging, get_logger
 from database.connection import DatabaseConnection
-from database.schema import MarketAnalysis, BacktestResult, OptimizationResult, TradingAIAnalysis
 from analysis.market_analyzer import MarketAnalyzer
-from backtesting.visualizer import BacktestVisualizer, BacktestResults
-from optimization.strategy_optimizer import StrategyOptimizer
 from data_processing.data_aggregator import DataAggregator
+from models.analysis_pipeline import AnalysisPipeline
+from database.trade_repository import TradeRepository
+from analysis.risk_manager import RiskManager
 
-def setup_logging():
-    """Konfiguriert das Logging"""
-    log_dir = Path("logs")
-    log_dir.mkdir(exist_ok=True)
+class TradingAIAnalysis:
+    """Hauptklasse für die Trading-AI-Analyse"""
     
-    # Setze Root-Logger auf WARNING, um doppelte Logs zu vermeiden
-    logging.getLogger().setLevel(logging.WARNING)
-    
-    # Konfiguriere nur den App-Logger
-    app_logger = logging.getLogger("trading_ai")
-    app_logger.setLevel(logging.INFO)
-    
-    # Formatierung
-    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-    
-    # File Handler
-    file_handler = logging.FileHandler(log_dir / "trading_ai.log")
-    file_handler.setFormatter(formatter)
-    app_logger.addHandler(file_handler)
-    
-    # Console Handler
-    console_handler = logging.StreamHandler()
-    console_handler.setFormatter(formatter)
-    app_logger.addHandler(console_handler)
-    
-    # Verhindere Weiterleitung an Parent-Logger
-    app_logger.propagate = False
-
-def run_new_analysis(db_connection: DatabaseConnection):
-    """Führt eine neue Analyse durch"""
-    logger = logging.getLogger(__name__)
-    logger.info("Starte neue Analyse...")
-    
-    try:
-        # Initialisiere Komponenten
-        market_analyzer = MarketAnalyzer()
-        strategy_optimizer = StrategyOptimizer()
+    def __init__(self, performance_mode: str = "normal"):
+        self.logger = get_logger()
+        self.performance_config = PERFORMANCE_MODES.get(performance_mode, PERFORMANCE_MODES["normal"])
+        self.db_connection = DatabaseConnection()
+        self.trade_repository = TradeRepository(self.db_connection)
+        self.risk_manager = RiskManager(TRADING_CONFIG)
         
-        # Lade Marktdaten (Beispiel: die letzten 365 Tage)
-        data_aggregator = DataAggregator()
-        market_data = data_aggregator.get_market_data(days=365)
-        news_data = data_aggregator.get_news_data(days=365)
-        
-        # Führe Marktanalyse durch
-        analysis_results = market_analyzer.analyze_data(market_data=market_data, news_data=news_data)
-        
-        # Optimiere Strategie basierend auf Analyseergebnissen
-        optimization_results, backtest_results_raw = strategy_optimizer.optimize_strategy(
-            market_data=market_data,
-            news_data=news_data
+        self.logger.logger.info(
+            "Trading AI Analysis initialisiert",
+            extra={"performance_mode": performance_mode}
         )
-        
-        # Konvertiere in BacktestResults Objekt
-        backtest_results = BacktestResults(
-            equity_curve=pd.Series(backtest_results_raw.equity_curve) if hasattr(backtest_results_raw, 'equity_curve') else pd.Series(),
-            trades=backtest_results_raw.trades if hasattr(backtest_results_raw, 'trades') else [],
-            monthly_returns=pd.Series(backtest_results_raw.monthly_returns) if hasattr(backtest_results_raw, 'monthly_returns') else pd.Series(),
-            performance_summary=backtest_results_raw.performance_metrics if hasattr(backtest_results_raw, 'performance_metrics') else {},
-            risk_metrics=backtest_results_raw.risk_metrics if hasattr(backtest_results_raw, 'risk_metrics') else {},
-            position_history=backtest_results_raw.position_history if hasattr(backtest_results_raw, 'position_history') else [],
-            benchmark_comparison=backtest_results_raw.benchmark_comparison if hasattr(backtest_results_raw, 'benchmark_comparison') else {}
-        )
-        
-        # Erstelle Visualizer und generiere Visualisierungen
-        backtest_visualizer = BacktestVisualizer(backtest_results)
-        
-        # Erstelle Ausgabeverzeichnis falls nicht vorhanden
-        output_dir = Path("analysis_output")
-        output_dir.mkdir(exist_ok=True)
-        
-        # Generiere Visualisierungen
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        backtest_visualizer.create_performance_dashboard(str(output_dir / f"performance_dashboard_{timestamp}.html"))
-        backtest_visualizer.plot_trade_analysis(str(output_dir / f"trade_analysis_{timestamp}.html"))
-        backtest_visualizer.create_risk_report(str(output_dir / f"risk_report_{timestamp}.html"))
-        
-        # Speichere Ergebnisse in der Datenbank
-        with db_connection.get_session() as session:
-            session.add_all([
-                *analysis_results,
-                *optimization_results,
-                *backtest_results_raw
-            ])
-        
-        logger.info(f"Neue Analyse erfolgreich abgeschlossen. Visualisierungen in: {output_dir}")
-        
-    except Exception as e:
-        logger.error(f"Fehler während der Analyse: {str(e)}")
-        raise
-
-def load_existing_analysis(db_connection: DatabaseConnection):
-    """Lädt und visualisiert vorhandene Analysedaten"""
-    logger = logging.getLogger(__name__)
-    logger.info("Lade vorhandene Analysedaten...")
     
-    try:
-        with db_connection.get_session() as session:
-            # Lade die neuesten Ergebnisse
-            latest_analysis = session.query(TradingAIAnalysis)\
-                .order_by(TradingAIAnalysis.timestamp.desc())\
-                .first()
+    def run_analysis(self, mode: str = "new") -> bool:
+        """Führt eine neue Analyse durch oder verwendet die letzte Analyse"""
+        try:
+            if mode == "new":
+                return self._run_new_analysis()
+            else:
+                return self._use_last_analysis()
                 
-            latest_backtest = session.query(BacktestResult)\
-                .order_by(BacktestResult.end_time.desc())\
-                .first()
-                
-            latest_optimization = session.query(OptimizationResult)\
-                .order_by(OptimizationResult.end_time.desc())\
-                .first()
-        
-        if not latest_analysis:
-            logger.warning("Keine vollständigen Analysedaten in der Datenbank gefunden")
-            return
-            
-        # Konvertiere die Datenbank-Ergebnisse in BacktestResults
-        if latest_backtest:
-            backtest_results = BacktestResults(
-                equity_curve=pd.Series(latest_backtest.equity_curve) if hasattr(latest_backtest, 'equity_curve') else pd.Series(),
-                trades=latest_backtest.trades if hasattr(latest_backtest, 'trades') else [],
-                monthly_returns=pd.Series(latest_backtest.monthly_returns) if hasattr(latest_backtest, 'monthly_returns') else pd.Series(),
-                performance_summary=latest_backtest.performance_metrics if hasattr(latest_backtest, 'performance_metrics') else {},
-                risk_metrics=latest_backtest.risk_metrics if hasattr(latest_backtest, 'risk_metrics') else {},
-                position_history=latest_backtest.position_history if hasattr(latest_backtest, 'position_history') else [],
-                benchmark_comparison=latest_backtest.benchmark_comparison if hasattr(latest_backtest, 'benchmark_comparison') else {}
+        except Exception as e:
+            self.logger.logger.error(
+                f"Fehler während der Analyse: {str(e)}",
+                exc_info=True,
+                extra={"error_type": type(e).__name__}
+            )
+            return False
+    
+    def _run_new_analysis(self) -> bool:
+        """Führt eine neue Analyse durch"""
+        try:
+            # Initialisiere Pipeline-Komponenten
+            data_aggregator = DataAggregator()
+            market_analyzer = MarketAnalyzer(history_dir=str(ANALYSIS_HISTORY_DIR))
+            analysis_pipeline = AnalysisPipeline(
+                data_aggregator=data_aggregator,
+                market_analyzer=market_analyzer,
+                risk_manager=self.risk_manager,
+                config=ANALYSIS_CONFIG
             )
             
-            # Erstelle Visualizer mit den konvertierten Daten
-            backtest_visualizer = BacktestVisualizer(backtest_results)
+            # Führe Pipeline aus
+            analysis_results = analysis_pipeline.execute()
             
-            # Erstelle Ausgabeverzeichnis falls nicht vorhanden
-            output_dir = Path("analysis_output")
-            output_dir.mkdir(exist_ok=True)
+            # Speichere Handelssignale in der Datenbank
+            if analysis_results.trade_signals:
+                self.trade_repository.save_trade_signals(analysis_results.trade_signals)
+                self.logger.info(
+                    "Handelssignale gespeichert",
+                    extra={
+                        "num_signals": len(analysis_results.trade_signals),
+                        "timestamp": datetime.now().isoformat()
+                    }
+                )
             
-            # Generiere Visualisierungen
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            backtest_visualizer.create_performance_dashboard(str(output_dir / f"performance_dashboard_{timestamp}.html"))
-            backtest_visualizer.plot_trade_analysis(str(output_dir / f"trade_analysis_{timestamp}.html"))
-            backtest_visualizer.create_risk_report(str(output_dir / f"risk_report_{timestamp}.html"))
+            analysis_results.metrics = {
+                'performance': analysis_results.performance_metrics,
+                'risk': analysis_results.risk_metrics
+            }
+            # Speichere Analyseergebnisse
+            self._save_analysis_results(analysis_results)
             
-            logger.info(f"Vorhandene Analysedaten erfolgreich geladen und visualisiert. Ausgabe in: {output_dir}")
-        
-        # Optimiere Strategien basierend auf den vorhandenen Daten
-        if latest_analysis and latest_analysis.market_data_analysis:
-            strategy_optimizer = StrategyOptimizer()
-            optimization_results = strategy_optimizer.optimize_strategies(latest_analysis.market_data_analysis)
+            return True
             
-            # Speichere neue Optimierungsergebnisse
-            if optimization_results:
-                with db_connection.get_session() as session:
-                    session.add(optimization_results)
-                    session.commit()
+        except Exception as e:
+            self.logger.logger.error(
+                f"Fehler während der neuen Analyse: {str(e)}",
+                exc_info=True
+            )
+            return False
+    
+    def _use_last_analysis(self) -> bool:
+        """Verwendet die letzte gespeicherte Analyse aus der Datenbank"""
+        try:
+            last_signals = self.trade_repository.get_latest_trade_signals()
+            if not last_signals:
+                self.logger.logger.warning("Keine vorherige Analyse gefunden. Führe neue Analyse durch...")
+                return self._run_new_analysis()
                 
-                logger.info("Strategieoptimierung basierend auf vorhandenen Daten abgeschlossen")
-        
-    except Exception as e:
-        logger.error(f"Fehler beim Laden der Analysedaten: {str(e)}")
-        raise
+            self.logger.logger.info(
+                "Verwende letzte Analyse",
+                extra={"num_signals": len(last_signals)}
+            )
+            return True
+            
+        except Exception as e:
+            self.logger.logger.error(
+                f"Fehler beim Abrufen der letzten Analyse: {str(e)}",
+                exc_info=True
+            )
+            return False
 
-def main():
+    def _save_analysis_results(self, analysis_results) -> None:
+        """Speichert die Analyseergebnisse"""
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_dir = RESULTS_DIR / timestamp
+        output_dir.mkdir(exist_ok=True)
+        
+        # Speichere Analyseergebnisse als JSON
+        analysis_results.save_to_json(output_dir / "analysis_results.json")
+        
+        # Speichere Visualisierungen
+        analysis_results.create_visualizations(output_dir)
+        
+        self.logger.logger.info(
+            f"Analyseergebnisse gespeichert",
+            extra={"output_dir": str(output_dir)}
+        )
+    
+    def cleanup(self) -> None:
+        """Räumt Ressourcen auf"""
+        try:
+            self.db_connection.close()
+        except Exception as e:
+            self.logger.logger.error(f"Fehler beim Aufräumen: {str(e)}", exc_info=True)
+
+def main() -> int:
     """Hauptfunktion"""
     parser = argparse.ArgumentParser(description="Trading AI Analysis System")
-    parser.add_argument("--mode", choices=['new', 'existing'], default='new',
-                      help="Analysemodus: 'new' für neue Analyse, 'existing' für vorhandene Daten")
-    parser.add_argument("--performance", choices=['normal', 'low', 'ultra-low', 'auto'],
-                      default='normal', help="Performance-Modus für die Analyse")
+    parser.add_argument(
+        "--performance",
+        choices=list(PERFORMANCE_MODES.keys()),
+        default="normal",
+        help="Performance-Modus für die Analyse"
+    )
+    parser.add_argument(
+        "--mode",
+        choices=["new", "last"],
+        default="new",
+        help="Analysemodus: 'new' für neue Analyse, 'last' für letzte gespeicherte Analyse"
+    )
     args = parser.parse_args()
     
+    # Initialisiere Logging
     setup_logging()
-    logger = logging.getLogger("trading_ai")  # Verwende den App-Logger
+    logger = get_logger()
     
     try:
-        # Initialisiere Datenbankverbindung
-        db_connection = DatabaseConnection()
-        db_connection.initialize()
+        analysis_system = TradingAIAnalysis(performance_mode=args.performance)
+        success = analysis_system.run_analysis(mode=args.mode)
+        analysis_system.cleanup()
         
-        if args.mode == 'new':
-            logger.info(f"Starte neue Analyse im {args.performance}-Performance-Modus")
-            run_new_analysis(db_connection)
-        else:
-            logger.info(f"Lade vorhandene Daten im {args.performance}-Performance-Modus")
-            load_existing_analysis(db_connection)
-            
+        return 0 if success else 1
+        
+    except KeyboardInterrupt:
+        logger.logger.info("Analyse durch Benutzer unterbrochen")
+        return 130
     except Exception as e:
-        logger.error(f"Unerwarteter Fehler: {str(e)}")
-        raise
-    finally:
-        db_connection.close()
+        logger.logger.critical(f"Kritischer Fehler: {str(e)}", exc_info=True)
+        return 1
 
 if __name__ == "__main__":
-    main() 
+    sys.exit(main()) 

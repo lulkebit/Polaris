@@ -1,5 +1,5 @@
 from data_collection.market_data import update_market_data
-from data_collection.news_data import fetch_news
+from data_collection.news_data import fetch_news, save_news_to_db
 from data_processing.clean_market_data import clean_market_data
 from data_processing.news_processor import add_sentiment
 from data_processing.market_data_aggregator import create_tables, aggregate_market_data
@@ -27,7 +27,8 @@ def run_pipeline():
     """
     Führt die komplette Daten-Pipeline aus:
     1. Marktdaten sammeln und in Einzeltabellen speichern
-    2. Daten in kombinierte Tabelle aggregieren
+    2. News sammeln und Sentiment-Analyse durchführen
+    3. Daten in kombinierte Tabelle aggregieren
     """
     try:
         # Stelle sicher, dass alle Tabellen existieren
@@ -35,6 +36,13 @@ def run_pipeline():
         
         # Aktualisiere Marktdaten
         update_market_data()
+        
+        # Hole und verarbeite News
+        for symbol in STOCK_SYMBOLS:
+            news_df = fetch_news(f"{symbol} stock")
+            processed_news = add_sentiment(news_df)
+            save_news_to_db(symbol, processed_news)
+            logger.info(f"News für {symbol} verarbeitet und gespeichert")
         
         logger.info("Pipeline erfolgreich ausgeführt")
         

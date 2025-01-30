@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine, text, Table, Column, Integer, Float, DateTime, MetaData, String
+from sqlalchemy import create_engine, text, Table, Column, Integer, Float, DateTime, MetaData, String, inspect
 from sqlalchemy.ext.declarative import declarative_base
 import pandas as pd
 import os
@@ -40,13 +40,44 @@ market_data_combined = Table(
     Column('close', Float, nullable=False),
     Column('volume', Float, nullable=False),
     Column('close_normalized', Float),
+    Column('analysis_id', Integer, nullable=True),
 )
 
 def create_tables():
-    """Erstellt die Tabellen in der Datenbank"""
-    engine = get_database_connection()
-    metadata.create_all(engine)
-    logger.info("Tabellen erfolgreich erstellt")
+    """Erstellt alle benötigten Datenbanktabellen, falls sie nicht existieren"""
+    with get_database_connection().connect() as connection:
+        cursor = connection.connection.cursor()
+        
+        # Erstelle Marktdaten-Tabellen
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS market_data (
+                symbol TEXT,
+                date DATE,
+                open REAL,
+                high REAL,
+                low REAL,
+                close REAL,
+                volume INTEGER,
+                PRIMARY KEY (symbol, date)
+            )
+        """)
+        
+        # Erstelle News-Tabelle
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS news_data (
+                id SERIAL PRIMARY KEY,
+                symbol TEXT,
+                title TEXT,
+                description TEXT,
+                published_at TIMESTAMP,
+                url TEXT,
+                sentiment REAL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        
+        connection.connection.commit()
+        logger.info("Tabellen erfolgreich erstellt")
 
 def normalize_price(price: float, min_price: float, max_price: float) -> float:
     """Normalisiert einen Preis auf einen Wert zwischen 0 und 1"""
@@ -63,8 +94,14 @@ def aggregate_market_data(symbols: List[str], days: int = 365) -> None:
     start_date = end_date - timedelta(days=days)
     
     try:
-        # Lösche alte Daten
+        # Prüfe ob die Tabelle existiert und erstelle sie wenn nicht
         with engine.connect() as connection:
+            inspector = inspect(engine)
+            if not inspector.has_table('market_data_combined'):
+                metadata.create_all(engine, tables=[market_data_combined])
+                logger.info("Tabelle market_data_combined wurde erstellt")
+            
+            # Lösche alte Daten nur wenn die Tabelle existiert
             connection.execute(text("TRUNCATE TABLE market_data_combined"))
             connection.commit()
         
@@ -82,7 +119,8 @@ def aggregate_market_data(symbols: List[str], days: int = 365) -> None:
                         high,
                         low,
                         close,
-                        volume
+                        volume,
+                        NULL as analysis_id
                     FROM {table_name}
                     WHERE timestamp >= :start_date
                     ORDER BY timestamp

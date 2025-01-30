@@ -10,6 +10,7 @@ import pandas as pd
 import numpy as np
 import ta
 from dataclasses import dataclass
+from sklearn.preprocessing import StandardScaler
 
 logger = setup_logger(__name__)
 
@@ -21,6 +22,17 @@ class AnalyseConfig:
     correlation_threshold: float = 0.7  # Schwellenwert für Korrelationsanalyse
     trend_strength_threshold: float = 0.6  # Schwellenwert für Trendstärke
     volume_ma_period: int = 20  # Periode für Volumen-Moving-Average
+
+@dataclass
+class MarketCondition:
+    """Datenklasse für Marktbedingungen"""
+    trend: str  # "bullish", "bearish", "neutral"
+    volatility: float  # 0-1 Skala
+    volume_profile: str  # "high", "normal", "low"
+    support_level: float
+    resistance_level: float
+    market_phase: str  # "accumulation", "distribution", "markup", "markdown"
+    risk_level: float  # 0-1 Skala
 
 class MarketAnalyzer:
     def __init__(self, history_dir: str = "analysis_history", positions_file: str = "open_positions.json"):
@@ -42,6 +54,15 @@ class MarketAnalyzer:
         # Portfolio-Tracking
         self.portfolio_history: List[Dict[str, Any]] = []
         self.current_portfolio_value: float = 0.0
+
+        # Technische Indikatoren konfigurieren
+        self.indicators = {
+            "sma": {"short": 20, "medium": 50, "long": 200},
+            "rsi": {"period": 14, "overbought": 70, "oversold": 30},
+            "macd": {"fast": 12, "slow": 26, "signal": 9},
+            "bollinger": {"period": 20, "std_dev": 2},
+            "atr": {"period": 14}
+        }
 
     def _load_positions(self) -> List[Dict[str, Any]]:
         """Lädt bestehende offene Positionen"""
@@ -128,57 +149,323 @@ class MarketAnalyzer:
 
     def analyze_data(
         self,
-        market_data: Optional[pd.DataFrame] = None,
-        news_data: Optional[pd.DataFrame] = None,
-        historical_days: int = 7
+        market_data: pd.DataFrame,
+        news_data: Optional[pd.DataFrame] = None
     ) -> Dict[str, Any]:
-        """
-        Führt eine umfassende Analyse der bereitgestellten Daten durch und berücksichtigt
-        dabei offene Positionen und historische Analysen
-        
-        Args:
-            market_data: Aktuelle Marktdaten als DataFrame
-            news_data: Aktuelle Nachrichtendaten als DataFrame
-            historical_days: Anzahl der Tage für historische Analysen
-            
-        Returns:
-            Dict mit strukturierten Analyseergebnissen, einschließlich:
-            - Handelsempfehlungen
-            - Technische Analyse
-            - Fundamentale Analyse
-            - Risikoeinschätzung
-            - Langfristige Strategie
-        """
-        logger.info("Starte umfassende Datenanalyse")
-        
-        if market_data is None and news_data is None:
-            logger.error("Keine Daten für die Analyse bereitgestellt")
-            return {}
-            
+        """Führt eine umfassende Marktanalyse durch"""
         try:
-            # Konvertiere DataFrames in String-Repräsentation für das Modell
-            market_data_str = market_data.to_json(orient='records', date_format='iso') if market_data is not None else ""
-            news_data_str = news_data.to_json(orient='records', date_format='iso') if news_data is not None else ""
+            # Validiere Eingabedaten
+            self._validate_market_data(market_data)
             
-            # Lade historische Analysen
-            historical_analyses = self._load_historical_analyses(days=historical_days)
+            # Berechne technische Indikatoren
+            technical_indicators = self._calculate_technical_indicators(market_data)
             
-            # Führe KI-Analyse durch
-            analysis_results = self.model.get_combined_analysis(
-                market_data=market_data_str,
-                news_data=news_data_str,
-                open_positions=self.open_positions,
-                historical_analyses=historical_analyses
+            # Analysiere Marktbedingungen
+            market_conditions = self._analyze_market_conditions(
+                market_data,
+                technical_indicators
             )
             
-            # Speichere Analyse in der Historie
-            self._save_analysis(analysis_results)
+            # Analysiere Volumen und Liquidität
+            volume_analysis = self._analyze_volume(market_data)
+            
+            # Identifiziere wichtige Preisniveaus
+            price_levels = self._identify_price_levels(market_data)
+            
+            # Analysiere Nachrichten und Sentiment (falls verfügbar)
+            sentiment_analysis = {}
+            if news_data is not None:
+                sentiment_analysis = self._analyze_news_sentiment(news_data)
+            
+            # Kombiniere alle Analyseergebnisse
+            analysis_results = {
+                "timestamp": datetime.now().isoformat(),
+                "market_conditions": market_conditions.__dict__,
+                "technical_indicators": technical_indicators,
+                "volume_analysis": volume_analysis,
+                "price_levels": price_levels,
+                "sentiment_analysis": sentiment_analysis
+            }
+            
+            # Logge Analysezusammenfassung
+            self._log_analysis_summary(analysis_results)
             
             return analysis_results
             
         except Exception as e:
-            logger.error(f"Fehler bei der Datenanalyse: {str(e)}")
-            return {}
+            logger.error(f"Fehler bei der Marktanalyse: {str(e)}", exc_info=True)
+            raise
+
+    def generate_signals(self, analysis_results: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Generiert Handelssignale basierend auf der Analyse"""
+        try:
+            if not analysis_results or not analysis_results:
+                logger.warning("Keine Analyseergebnisse verfügbar - Signalgenerierung übersprungen")
+                return None
+            
+            signals = []
+            market_conditions = analysis_results.get("market_conditions", {})
+            
+            # Check if market is tradeable
+            if not self._is_market_tradeable(market_conditions):
+                return signals
+            
+            # Generiere Signale basierend auf technischen Indikatoren
+            technical_signals = self._generate_technical_signals(
+                analysis_results["technical_indicators"],
+                market_conditions
+            )
+            
+            # Füge Risikometriken hinzu
+            for signal in technical_signals:
+                signal.update(self._calculate_signal_metrics(
+                    signal,
+                    market_conditions,
+                    analysis_results
+                ))
+            
+            signals.extend(technical_signals)
+            
+            # Logge generierte Signale
+            self._log_signal_generation(signals)
+            
+            return signals
+            
+        except Exception as e:
+            logger.error(f"Fehler bei der Signalgenerierung: {str(e)}", exc_info=True)
+            return None
+
+    def _validate_market_data(self, market_data: pd.DataFrame) -> None:
+        """Validiert die Eingabedaten"""
+        required_columns = ["open", "high", "low", "close", "volume"]
+        if not all(col in market_data.columns for col in required_columns):
+            raise ValueError(f"Marktdaten müssen folgende Spalten enthalten: {required_columns}")
+        
+        if market_data.empty:
+            raise ValueError("Marktdaten sind leer")
+        
+        if market_data.isnull().any().any():
+            raise ValueError("Marktdaten enthalten NULL-Werte")
+    
+    def _calculate_technical_indicators(self, data: pd.DataFrame) -> Dict[str, Any]:
+        """Berechnet technische Indikatoren mit der ta Bibliothek"""
+        results = {}
+        
+        try:
+            # Trend Indikatoren
+            results["sma"] = {
+                "short": ta.trend.sma_indicator(data["close"], window=self.indicators["sma"]["short"]),
+                "medium": ta.trend.sma_indicator(data["close"], window=self.indicators["sma"]["medium"]),
+                "long": ta.trend.sma_indicator(data["close"], window=self.indicators["sma"]["long"])
+            }
+            
+            # RSI
+            results["rsi"] = ta.momentum.RSIIndicator(
+                data["close"], 
+                window=self.indicators["rsi"]["period"]
+            ).rsi()
+            
+            # MACD
+            macd = ta.trend.MACD(
+                data["close"],
+                window_slow=self.indicators["macd"]["slow"],
+                window_fast=self.indicators["macd"]["fast"],
+                window_sign=self.indicators["macd"]["signal"]
+            )
+            results["macd"] = {
+                "macd": macd.macd(),
+                "signal": macd.macd_signal(),
+                "hist": macd.macd_diff()
+            }
+            
+            # Bollinger Bands
+            bollinger = ta.volatility.BollingerBands(
+                data["close"],
+                window=self.indicators["bollinger"]["period"],
+                window_dev=self.indicators["bollinger"]["std_dev"]
+            )
+            results["bollinger"] = {
+                "high": bollinger.bollinger_hband(),
+                "mid": bollinger.bollinger_mavg(),
+                "low": bollinger.bollinger_lband()
+            }
+            
+            # ATR
+            results["atr"] = ta.volatility.AverageTrueRange(
+                high=data["high"],
+                low=data["low"],
+                close=data["close"],
+                window=self.indicators["atr"]["period"]
+            ).average_true_range()
+            
+            # Zusätzliche Indikatoren
+            results["volume_vwap"] = ta.volume.VolumeWeightedAveragePrice(
+                high=data["high"],
+                low=data["low"],
+                close=data["close"],
+                volume=data["volume"],
+                window=self.config.volume_ma_period
+            ).volume_weighted_average_price()
+            
+            results["stoch"] = ta.momentum.StochasticOscillator(
+                high=data["high"],
+                low=data["low"],
+                close=data["close"]
+            ).stoch()
+            
+            results["adx"] = ta.trend.ADXIndicator(
+                high=data["high"],
+                low=data["low"],
+                close=data["close"]
+            ).adx()
+            
+        except Exception as e:
+            logger.error(f"Fehler bei der Berechnung der technischen Indikatoren: {str(e)}")
+            raise
+            
+        return results
+    
+    def _analyze_market_conditions(
+        self,
+        data: pd.DataFrame,
+        indicators: Dict[str, Any]
+    ) -> MarketCondition:
+        """Analysiert die aktuellen Marktbedingungen"""
+        # Trend-Analyse
+        sma_short = indicators["sma"]["short"].iloc[-1]
+        sma_long = indicators["sma"]["long"].iloc[-1]
+        
+        if sma_short > sma_long * 1.02:
+            trend = "bullish"
+        elif sma_short < sma_long * 0.98:
+            trend = "bearish"
+        else:
+            trend = "neutral"
+        
+        # Volatilitäts-Analyse
+        recent_atr = indicators["atr"][-20:]
+        volatility = float(np.mean(recent_atr) / data["close"].iloc[-1])
+        
+        # Volumen-Analyse
+        avg_volume = data["volume"].rolling(window=20).mean()
+        current_volume = data["volume"].iloc[-1]
+        
+        if current_volume > avg_volume.iloc[-1] * 1.5:
+            volume_profile = "high"
+        elif current_volume < avg_volume.iloc[-1] * 0.5:
+            volume_profile = "low"
+        else:
+            volume_profile = "normal"
+        
+        # Support und Resistance
+        support_level = self._calculate_support(data)
+        resistance_level = self._calculate_resistance(data)
+        
+        # Marktphase bestimmen
+        market_phase = self._determine_market_phase(data, indicators)
+        
+        # Risiko-Level berechnen
+        risk_level = self._calculate_risk_level(
+            data,
+            indicators,
+            volatility,
+            volume_profile
+        )
+        
+        return MarketCondition(
+            trend=trend,
+            volatility=volatility,
+            volume_profile=volume_profile,
+            support_level=support_level,
+            resistance_level=resistance_level,
+            market_phase=market_phase,
+            risk_level=risk_level
+        )
+    
+    def _analyze_volume(self, data: pd.DataFrame) -> Dict[str, Any]:
+        """Analysiert das Handelsvolumen"""
+        return {
+            "average_volume": float(data["volume"].mean()),
+            "volume_trend": self._calculate_volume_trend(data),
+            "volume_spikes": self._detect_volume_spikes(data),
+            "volume_profile": self._analyze_volume_profile(data)
+        }
+    
+    def _identify_price_levels(self, data: pd.DataFrame) -> Dict[str, Any]:
+        """Identifiziert wichtige Preisniveaus"""
+        return {
+            "support_levels": self._find_support_levels(data),
+            "resistance_levels": self._find_resistance_levels(data),
+            "pivot_points": self._calculate_pivot_points(data)
+        }
+    
+    def _analyze_news_sentiment(self, news_data: pd.DataFrame) -> Dict[str, Any]:
+        """Analysiert Nachrichten-Sentiment"""
+        # TODO: Implementiere detaillierte Sentiment-Analyse
+        return {}
+    
+    def _is_market_tradeable(self, conditions: Dict[str, Any]) -> bool:
+        """Prüft ob der Markt handelbar ist"""
+        return (
+            conditions["volatility"] < 0.8 and  # Nicht zu volatil
+            conditions["risk_level"] < 0.7      # Nicht zu riskant
+        )
+    
+    def _generate_technical_signals(
+        self,
+        indicators: Dict[str, Any],
+        conditions: Dict[str, Any]
+    ) -> List[Dict[str, Any]]:
+        """Generiert Signale basierend auf technischen Indikatoren"""
+        signals = []
+        
+        # TODO: Implementiere Signalgenerierung basierend auf
+        # technischen Indikatoren und Marktbedingungen
+        
+        return signals
+    
+    def _calculate_signal_metrics(
+        self,
+        signal: Dict[str, Any],
+        conditions: Dict[str, Any],
+        analysis: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Berechnet zusätzliche Metriken für ein Signal"""
+        return {
+            "confidence": self._calculate_signal_confidence(signal, conditions),
+            "risk_score": self._calculate_signal_risk(signal, conditions),
+            "expected_return": self._calculate_expected_return(signal, analysis),
+            "market_context": conditions
+        }
+    
+    def _log_analysis_summary(self, analysis_results: Dict[str, Any]) -> None:
+        """Loggt eine Zusammenfassung der Analyseergebnisse"""
+        try:
+            summary = {
+                "timestamp": analysis_results.get("timestamp"),
+                "market_conditions": analysis_results.get("market_conditions", {}),
+                "num_technical_signals": len(analysis_results.get("technical_indicators", {})),
+                "volume_analysis": analysis_results.get("volume_analysis", {}),
+                "price_levels": analysis_results.get("price_levels", {}),
+                "sentiment_analysis": analysis_results.get("sentiment_analysis", {})
+            }
+            
+            # Verwende die Standard-Logging-Methode
+            logger.info("Analysezusammenfassung", extra={"summary": summary})
+            
+        except Exception as e:
+            logger.error(f"Fehler beim Loggen der Analysezusammenfassung: {str(e)}")
+    
+    def _log_signal_generation(self, signals: List[Dict[str, Any]]) -> None:
+        """Loggt generierte Signale"""
+        summary = {
+            "timestamp": datetime.now().isoformat(),
+            "total_signals": len(signals),
+            "signal_types": self._count_signal_types(signals),
+            "average_confidence": np.nanmean([s.get("confidence", 0) for s in signals]) if signals else 0
+        }
+        
+        logger.log_trade_analysis({"signal_generation": summary})
 
     def _update_risk_limits(self, analysis_result: Dict[str, Any]) -> None:
         """Aktualisiert Risikolimits basierend auf Marktbedingungen"""
@@ -281,7 +568,7 @@ class MarketAnalyzer:
                 
                 analysis["volume_analysis"][symbol] = {
                     "avg_volume": volume.mean(),
-                    "volume_trend": "increasing" if volume.tail(5).mean() > volume_ma.tail(5).mean() else "decreasing"
+                    "volume_trend": self._calculate_volume_trend(market_df)
                 }
             
             # Wichtige Preisniveaus
@@ -325,178 +612,6 @@ class MarketAnalyzer:
             news_analysis["key_events"] = important_news.to_dict('records')
         
         return news_analysis
-
-    def _calculate_technical_indicators(self, market_df: pd.DataFrame) -> Dict[str, Any]:
-        """Berechnet technische Indikatoren"""
-        indicators = {}
-        
-        for symbol in market_df.columns:
-            if symbol == 'timestamp':
-                continue
-                
-            close_prices = market_df[symbol].dropna()
-            if len(close_prices) < self.config.min_data_points:
-                continue
-            
-            # Trend Indikatoren
-            indicators[symbol] = {
-                "rsi": ta.momentum.RSIIndicator(close_prices).rsi(),
-                "macd": ta.trend.MACD(close_prices).macd(),
-                "macd_signal": ta.trend.MACD(close_prices).macd_signal(),
-                "macd_diff": ta.trend.MACD(close_prices).macd_diff(),
-                "sma_20": ta.trend.SMAIndicator(close_prices, window=20).sma_indicator(),
-                "sma_50": ta.trend.SMAIndicator(close_prices, window=50).sma_indicator(),
-                "ema_20": ta.trend.EMAIndicator(close_prices, window=20).ema_indicator(),
-                
-                # Volatilitäts Indikatoren
-                "bollinger_high": ta.volatility.BollingerBands(close_prices).bollinger_hband(),
-                "bollinger_low": ta.volatility.BollingerBands(close_prices).bollinger_lband(),
-                "atr": ta.volatility.AverageTrueRange(
-                    high=market_df[f"{symbol}_high"] if f"{symbol}_high" in market_df else close_prices,
-                    low=market_df[f"{symbol}_low"] if f"{symbol}_low" in market_df else close_prices,
-                    close=close_prices
-                ).average_true_range(),
-                
-                # Volumen Indikatoren
-                "obv": ta.volume.OnBalanceVolumeIndicator(
-                    close_prices,
-                    market_df[f"{symbol}_volume"] if f"{symbol}_volume" in market_df else pd.Series([0] * len(close_prices))
-                ).on_balance_volume()
-            }
-        
-        return indicators
-
-    def _analyze_trends(self, market_df: pd.DataFrame) -> Dict[str, Any]:
-        """Analysiert Markttrends"""
-        trends = {}
-        
-        for symbol in market_df.columns:
-            if symbol == 'timestamp':
-                continue
-                
-            prices = market_df[symbol].dropna()
-            if len(prices) < self.config.min_data_points:
-                continue
-            
-            # Trendstärke berechnen
-            sma_20 = prices.rolling(window=20).mean()
-            sma_50 = prices.rolling(window=50).mean()
-            
-            current_price = prices.iloc[-1]
-            current_sma_20 = sma_20.iloc[-1]
-            current_sma_50 = sma_50.iloc[-1]
-            
-            # Trendrichtung bestimmen
-            trend_direction = "seitwärts"
-            if current_price > current_sma_20 > current_sma_50:
-                trend_direction = "aufwärts"
-            elif current_price < current_sma_20 < current_sma_50:
-                trend_direction = "abwärts"
-            
-            # Trendstärke berechnen
-            returns = prices.pct_change()
-            trend_strength = abs(returns.mean()) / returns.std() if returns.std() != 0 else 0
-            
-            trends[symbol] = {
-                "direction": trend_direction,
-                "strength": trend_strength,
-                "above_sma_20": current_price > current_sma_20,
-                "above_sma_50": current_price > current_sma_50,
-                "sma_alignment": "bullish" if current_sma_20 > current_sma_50 else "bearish"
-            }
-        
-        return trends
-
-    def _generate_trading_signals(
-        self,
-        market_df: pd.DataFrame,
-        technical_indicators: Dict[str, Any],
-        trend_analysis: Dict[str, Any]
-    ) -> List[Dict[str, Any]]:
-        """Generiert Handelssignale"""
-        signals = []
-        
-        for symbol in market_df.columns:
-            if symbol == 'timestamp':
-                continue
-                
-            if symbol not in technical_indicators or symbol not in trend_analysis:
-                continue
-            
-            indicators = technical_indicators[symbol]
-            trend = trend_analysis[symbol]
-            
-            # RSI Signale
-            rsi = indicators["rsi"].iloc[-1] if not pd.isna(indicators["rsi"].iloc[-1]) else 50
-            
-            # MACD Signale
-            macd = indicators["macd"].iloc[-1]
-            macd_signal = indicators["macd_signal"].iloc[-1]
-            macd_diff = indicators["macd_diff"].iloc[-1]
-            
-            # Bollinger Bands
-            bb_high = indicators["bollinger_high"].iloc[-1]
-            bb_low = indicators["bollinger_low"].iloc[-1]
-            current_price = market_df[symbol].iloc[-1]
-            
-            signal = {
-                "symbol": symbol,
-                "timestamp": datetime.now().isoformat(),
-                "signals": []
-            }
-            
-            # RSI Überverkauft/Überkauft
-            if rsi < 30:
-                signal["signals"].append({
-                    "type": "oversold",
-                    "indicator": "RSI",
-                    "value": rsi,
-                    "strength": "strong" if rsi < 20 else "moderate"
-                })
-            elif rsi > 70:
-                signal["signals"].append({
-                    "type": "overbought",
-                    "indicator": "RSI",
-                    "value": rsi,
-                    "strength": "strong" if rsi > 80 else "moderate"
-                })
-            
-            # MACD Kreuzungen
-            if macd_diff > 0 and abs(macd - macd_signal) < 0.1:
-                signal["signals"].append({
-                    "type": "bullish",
-                    "indicator": "MACD",
-                    "value": macd_diff,
-                    "strength": "strong" if macd_diff > 0.2 else "moderate"
-                })
-            elif macd_diff < 0 and abs(macd - macd_signal) < 0.1:
-                signal["signals"].append({
-                    "type": "bearish",
-                    "indicator": "MACD",
-                    "value": macd_diff,
-                    "strength": "strong" if macd_diff < -0.2 else "moderate"
-                })
-            
-            # Bollinger Band Signale
-            if current_price <= bb_low:
-                signal["signals"].append({
-                    "type": "support",
-                    "indicator": "Bollinger",
-                    "value": current_price,
-                    "strength": "strong"
-                })
-            elif current_price >= bb_high:
-                signal["signals"].append({
-                    "type": "resistance",
-                    "indicator": "Bollinger",
-                    "value": current_price,
-                    "strength": "strong"
-                })
-            
-            if signal["signals"]:
-                signals.append(signal)
-        
-        return signals
 
     def _determine_market_regime(self, market_df: pd.DataFrame) -> str:
         """Bestimmt das aktuelle Marktregime"""
@@ -645,4 +760,227 @@ class MarketAnalyzer:
             "daily_return": (current_value - daily_start_value) / daily_start_value,
             "weekly_return": (current_value - weekly_start_value) / weekly_start_value,
             "monthly_return": (current_value - monthly_start_value) / monthly_start_value
-        } 
+        }
+
+    def _calculate_support(self, data: pd.DataFrame, window: int = 20) -> float:
+        """Berechnet das Support-Level basierend auf lokalen Minimums"""
+        recent_data = data.tail(window)
+        return float(recent_data['low'].min())
+
+    def _calculate_resistance(self, data: pd.DataFrame, window: int = 20) -> float:
+        """Berechnet das Resistance-Level basierend auf lokalen Maximums"""
+        recent_data = data.tail(window)
+        return float(recent_data['high'].max())
+
+    def _calculate_risk_level(
+        self,
+        data: pd.DataFrame,
+        indicators: Dict[str, Any],
+        volatility: float,
+        volume_profile: str
+    ) -> float:
+        """Berechnet das Risiko-Level basierend auf verschiedenen Faktoren"""
+        risk_score = 0.0
+        
+        # Volatilitäts-basiertes Risiko (0-0.4)
+        if volatility > 0.03:  # Hohe Volatilität
+            risk_score += 0.4
+        elif volatility > 0.02:  # Mittlere Volatilität
+            risk_score += 0.2
+        else:  # Niedrige Volatilität
+            risk_score += 0.1
+            
+        # Volumen-basiertes Risiko (0-0.3)
+        if volume_profile == "high":
+            risk_score += 0.3
+        elif volume_profile == "normal":
+            risk_score += 0.15
+            
+        # Trend-basiertes Risiko (0-0.3)
+        rsi = indicators.get("rsi", pd.Series([50])).iloc[-1]
+        if rsi > 70 or rsi < 30:  # Überkauft oder überverkauft
+            risk_score += 0.3
+        elif 40 <= rsi <= 60:  # Neutraler Bereich
+            risk_score += 0.15
+            
+        return min(1.0, risk_score)
+
+    def _determine_market_phase(self, data: pd.DataFrame, indicators: Dict[str, Any]) -> str:
+        """Bestimmt die aktuelle Marktphase"""
+        # Trend-Analyse
+        sma_short = indicators["sma"]["short"].iloc[-1]
+        sma_medium = indicators["sma"]["medium"].iloc[-1]
+        sma_long = indicators["sma"]["long"].iloc[-1]
+        current_price = data["close"].iloc[-1]
+        
+        if current_price > sma_short > sma_medium > sma_long:
+            return "markup"  # Starker Aufwärtstrend
+        elif current_price < sma_short < sma_medium < sma_long:
+            return "markdown"  # Starker Abwärtstrend
+        elif sma_short < current_price < sma_medium and sma_long < sma_medium:
+            return "accumulation"  # Mögliche Bodenbildung
+        elif sma_short > current_price > sma_medium and sma_long > sma_medium:
+            return "distribution"  # Mögliche Topbildung
+        else:
+            return "sideways"  # Seitwärtsbewegung
+
+    def _calculate_volume_trend(self, data: pd.DataFrame, window: int = 20) -> str:
+        """Berechnet den Volumentrend basierend auf gleitendem Durchschnitt"""
+        if 'volume' not in data.columns:
+            return "unknown"
+            
+        volume = data['volume']
+        volume_ma = volume.rolling(window=window).mean()
+        
+        # Vergleiche aktuelles Volumen mit gleitendem Durchschnitt
+        current_volume_ma = volume_ma.iloc[-1]
+        past_volume_ma = volume_ma.iloc[-window]
+        
+        if current_volume_ma > past_volume_ma * 1.1:
+            return "increasing"
+        elif current_volume_ma < past_volume_ma * 0.9:
+            return "decreasing"
+        else:
+            return "stable"
+
+    def _detect_volume_spikes(self, data: pd.DataFrame, threshold: float = 2.0) -> List[Dict[str, Any]]:
+        """Erkennt signifikante Volumenspitzen"""
+        if 'volume' not in data.columns:
+            return []
+            
+        volume = data['volume']
+        volume_ma = volume.rolling(window=20).mean()
+        volume_std = volume.rolling(window=20).std()
+        
+        spikes = []
+        for i in range(len(data)):
+            if volume.iloc[i] > volume_ma.iloc[i] + (threshold * volume_std.iloc[i]):
+                spikes.append({
+                    "timestamp": data.index[i],
+                    "volume": float(volume.iloc[i]),
+                    "average_volume": float(volume_ma.iloc[i]),
+                    "deviation": float((volume.iloc[i] - volume_ma.iloc[i]) / volume_std.iloc[i])
+                })
+        
+        return spikes
+
+    def _analyze_volume_profile(self, data: pd.DataFrame) -> Dict[str, Any]:
+        """Analysiert das Volumprofil für verschiedene Preisbereiche"""
+        if 'volume' not in data.columns:
+            return {}
+            
+        # Teile den Preisbereich in Zonen auf
+        price_range = data['high'].max() - data['low'].min()
+        zone_size = price_range / 10
+        
+        volume_profile = {}
+        for i in range(10):
+            zone_low = data['low'].min() + (i * zone_size)
+            zone_high = zone_low + zone_size
+            
+            # Finde Volumen in dieser Preiszone
+            zone_mask = (data['low'] >= zone_low) & (data['high'] < zone_high)
+            zone_volume = data.loc[zone_mask, 'volume'].sum()
+            
+            volume_profile[f"zone_{i+1}"] = {
+                "price_range": [float(zone_low), float(zone_high)],
+                "volume": float(zone_volume)
+            }
+        
+        return {
+            "volume_by_price_zone": volume_profile,
+            "total_volume": float(data['volume'].sum()),
+            "average_daily_volume": float(data['volume'].mean())
+        }
+
+    def _find_support_levels(self, data: pd.DataFrame) -> List[float]:
+        """
+        Identifiziert Unterstützungsniveaus basierend auf den historischen Preisdaten.
+        
+        Args:
+            data: DataFrame mit historischen Preisdaten
+            
+        Returns:
+            Liste von Unterstützungsniveaus
+        """
+        try:
+            # Berechne gleitende Durchschnitte für Unterstützungsniveaus
+            short_ma = data['low'].rolling(window=5).mean()
+            long_ma = data['low'].rolling(window=20).mean()
+            
+            # Finde Kreuzungspunkte, die auf Unterstützung hindeuten
+            crossovers = np.where(short_ma > long_ma, 1, 0)
+            support_levels = []
+            
+            for i in range(1, len(crossovers)):
+                if crossovers[i] == 1 and crossovers[i-1] == 0:
+                    support_levels.append(data['low'].iloc[i])
+            
+            # Entferne Duplikate und sortiere die Niveaus
+            support_levels = sorted(list(set(support_levels)))
+            
+            return support_levels[-3:]  # Rückgabe der letzten 3 Unterstützungsniveaus
+            
+        except Exception as e:
+            logger.error(f"Fehler bei der Berechnung der Unterstützungsniveaus: {str(e)}")
+            return []
+
+    def _find_resistance_levels(self, data: pd.DataFrame) -> List[float]:
+        """
+        Identifiziert Widerstandsniveaus basierend auf den historischen Preisdaten.
+        
+        Args:
+            data: DataFrame mit historischen Preisdaten
+            
+        Returns:
+            Liste von Widerstandsniveaus
+        """
+        try:
+            # Berechne gleitende Durchschnitte für Widerstandsniveaus
+            short_ma = data['high'].rolling(window=5).mean()
+            long_ma = data['high'].rolling(window=20).mean()
+            
+            # Finde Kreuzungspunkte, die auf Widerstand hindeuten
+            crossovers = np.where(short_ma < long_ma, 1, 0)
+            resistance_levels = []
+            
+            for i in range(1, len(crossovers)):
+                if crossovers[i] == 1 and crossovers[i-1] == 0:
+                    resistance_levels.append(data['high'].iloc[i])
+            
+            # Entferne Duplikate und sortiere die Niveaus
+            resistance_levels = sorted(list(set(resistance_levels)))
+            
+            return resistance_levels[-3:]  # Rückgabe der letzten 3 Widerstandsniveaus
+            
+        except Exception as e:
+            logger.error(f"Fehler bei der Berechnung der Widerstandsniveaus: {str(e)}")
+            return []
+
+    def _calculate_pivot_points(self, data: pd.DataFrame) -> Dict[str, Any]:
+        """Berechnet Pivot-Punkte basierend auf historischen Preisdaten"""
+        # TODO: Implementiere Berechnung von Pivot-Punkten
+        return {}
+
+    def _calculate_signal_confidence(self, signal: Dict[str, Any], conditions: Dict[str, Any]) -> float:
+        """Berechnet die Vertrauenswürdigkeit eines Signals"""
+        # TODO: Implementiere Logik zur Berechnung der Signalvertrauenswürdigkeit
+        return 0.5
+
+    def _calculate_signal_risk(self, signal: Dict[str, Any], conditions: Dict[str, Any]) -> float:
+        """Berechnet das Risiko eines Signals"""
+        # TODO: Implementiere Logik zur Berechnung des Signalrisikos
+        return 0.5
+
+    def _calculate_expected_return(self, signal: Dict[str, Any], analysis: Dict[str, Any]) -> float:
+        """Berechnet den erwarteten Rückfluss eines Signals"""
+        # TODO: Implementiere Logik zur Berechnung des erwarteten Signalrückflusses
+        return 0.0
+
+    def _count_signal_types(self, signals: List[Dict[str, Any]]) -> Dict[str, int]:
+        """Zählt die verschiedenen Signaltypen"""
+        signal_types = {}
+        for signal in signals:
+            signal_type = signal.get("type", "unknown")
+            signal_types[signal_type] = signal_types.get(signal_type, 0) + 1
+        return signal_types 
