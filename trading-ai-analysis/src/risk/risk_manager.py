@@ -1,12 +1,13 @@
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Tuple
+import numpy as np
+import pandas as pd
 from datetime import datetime
 import json
 from pathlib import Path
-from ..utils.logger import setup_logger
-import numpy as np
+import logging
 from dataclasses import dataclass
 
-logger = setup_logger(__name__)
+logger = logging.getLogger(__name__)
 
 @dataclass
 class RisikoGrenzen:
@@ -18,6 +19,8 @@ class RisikoGrenzen:
     min_diversifikation: int = 10  # Minimale Anzahl verschiedener Positionen
     max_korrelation: float = 0.6  # Maximale Korrelation zwischen Positionen
     liquiditaets_reserve: float = 0.15  # Mindest-Liquiditätsreserve (15%)
+    var_limit: float = 0.02  # Value at Risk Limit (2% täglich)
+    stress_test_verlust_limit: float = 0.15  # Maximaler Verlust im Stress-Test (15%)
 
 class RiskManager:
     def __init__(self, config_file: str = "risk_config.json"):
@@ -26,6 +29,9 @@ class RiskManager:
         self.position_history: List[Dict[str, Any]] = []
         self.circuit_breaker = False
         self.error_count = 0
+        self.portfolio_value = 0.0
+        self.current_drawdown = 0.0
+        self.peak_value = 0.0
         
     def _load_config(self) -> RisikoGrenzen:
         """Lädt die Risikomanagement-Konfiguration"""
@@ -48,108 +54,185 @@ class RiskManager:
             logger.error(f"Fehler beim Speichern der Risikokonfiguration: {str(e)}")
 
     def validate_position(self, position: Dict[str, Any], portfolio_value: float) -> Dict[str, Any]:
-        """
-        Überprüft eine Position auf Einhaltung der Risikoparameter
-        """
+        """Validiert eine einzelne Position gegen die Risikoregeln"""
         validation_result = {
-            "position_id": position.get("position_id"),
-            "ist_valid": True,
-            "warnungen": [],
-            "anpassungen": []
+            "valid": True,
+            "warnings": [],
+            "errors": []
         }
-
-        # Prüfe Positionsgröße
-        position_size = float(position.get("position_size", 0))
-        max_position_value = portfolio_value * self.risiko_grenzen.max_position_size
         
-        if position_size > max_position_value:
-            validation_result["ist_valid"] = False
-            validation_result["warnungen"].append(
-                f"Position überschreitet maximale Größe von {self.risiko_grenzen.max_position_size*100}%"
+        # Prüfe Positionsgröße
+        position_size = position['value'] / portfolio_value
+        if position_size > self.risiko_grenzen.max_position_size:
+            validation_result["valid"] = False
+            validation_result["errors"].append(
+                f"Position zu groß: {position_size:.1%} > {self.risiko_grenzen.max_position_size:.1%}"
             )
-            validation_result["anpassungen"].append({
-                "typ": "reduce_position",
-                "ziel_groesse": max_position_value
-            })
-
+        
         # Prüfe Stop-Loss
-        stop_loss = position.get("stop_loss")
-        if stop_loss:
-            stop_loss_percent = abs(float(stop_loss) - float(position.get("entry_price", 0))) / float(position.get("entry_price", 0))
+        if 'stop_loss' in position:
+            stop_loss_percent = (position['entry_price'] - position['stop_loss']) / position['entry_price']
             if stop_loss_percent < self.risiko_grenzen.stop_loss_minimum:
-                validation_result["warnungen"].append(
-                    f"Stop-Loss zu eng gesetzt (minimum {self.risiko_grenzen.stop_loss_minimum*100}%)"
+                validation_result["warnings"].append(
+                    f"Stop-Loss zu eng: {stop_loss_percent:.1%} < {self.risiko_grenzen.stop_loss_minimum:.1%}"
                 )
-                validation_result["anpassungen"].append({
-                    "typ": "adjust_stop_loss",
-                    "minimum_abstand": self.risiko_grenzen.stop_loss_minimum
-                })
-
+        
         return validation_result
 
-    def calculate_portfolio_risk(self, positions: List[Dict[str, Any]], portfolio_value: float) -> Dict[str, Any]:
-        """
-        Berechnet das Gesamtrisiko des Portfolios
-        """
-        risk_assessment = {
-            "gesamt_risiko": 0.0,
-            "sektor_exposure": {},
-            "diversifikation_score": 0.0,
-            "liquiditaet": 0.0,
-            "warnungen": [],
-            "empfehlungen": []
+    def calculate_portfolio_risk(self, positions: Dict[str, Dict[str, Any]], portfolio_value: float) -> Dict[str, Any]:
+        """Berechnet das Gesamtrisiko des Portfolios"""
+        risk_metrics = {
+            "total_exposure": 0.0,
+            "sector_exposure": {},
+            "position_sizes": {},
+            "correlation_matrix": None,
+            "var_95": 0.0,
+            "current_drawdown": self.current_drawdown,
+            "diversification_score": 0.0,
+            "risk_warnings": []
+        }
+        
+        # Berechne Exposure
+        for symbol, pos in positions.items():
+            position_value = pos['value']
+            risk_metrics["total_exposure"] += position_value
+            risk_metrics["position_sizes"][symbol] = position_value / portfolio_value
+            
+            # Sektor-Exposure
+            sector = pos.get('sector', 'Unknown')
+            risk_metrics["sector_exposure"][sector] = risk_metrics["sector_exposure"].get(sector, 0) + \
+                                                    position_value / portfolio_value
+        
+        # Prüfe Sektorgrenzen
+        for sector, exposure in risk_metrics["sector_exposure"].items():
+            if exposure > self.risiko_grenzen.max_sektor_exposure:
+                risk_metrics["risk_warnings"].append(
+                    f"Sektor-Exposure zu hoch für {sector}: {exposure:.1%}"
+                )
+        
+        # Berechne Diversifikation Score
+        num_positions = len(positions)
+        risk_metrics["diversification_score"] = min(1.0, num_positions / self.risiko_grenzen.min_diversifikation)
+        
+        if num_positions < self.risiko_grenzen.min_diversifikation:
+            risk_metrics["risk_warnings"].append(
+                f"Zu wenig Diversifikation: {num_positions} < {self.risiko_grenzen.min_diversifikation}"
+            )
+        
+        return risk_metrics
+
+    def update_portfolio_value(self, new_value: float) -> None:
+        """Aktualisiert den Portfoliowert und berechnet Drawdown"""
+        self.portfolio_value = new_value
+        
+        if new_value > self.peak_value:
+            self.peak_value = new_value
+        
+        if self.peak_value > 0:
+            self.current_drawdown = (self.peak_value - new_value) / self.peak_value
+            
+            if self.current_drawdown > self.risiko_grenzen.max_drawdown:
+                self.trigger_circuit_breaker(f"Maximaler Drawdown überschritten: {self.current_drawdown:.1%}")
+
+    def calculate_var(self, returns: pd.Series, confidence_level: float = 0.95) -> float:
+        """Berechnet den Value at Risk"""
+        return np.percentile(returns, (1 - confidence_level) * 100)
+
+    def perform_stress_test(self, positions: Dict[str, Dict[str, Any]], scenarios: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Führt Stress-Tests für verschiedene Marktszenarien durch"""
+        stress_test_results = {
+            "worst_case_loss": 0.0,
+            "scenario_impacts": {},
+            "risk_warnings": []
+        }
+        
+        for scenario in scenarios:
+            total_impact = 0.0
+            for symbol, pos in positions.items():
+                # Berechne Verlust basierend auf Szenario-Parameter
+                impact = pos['value'] * scenario.get('market_change', 0)
+                if symbol in scenario.get('specific_impacts', {}):
+                    impact = pos['value'] * scenario['specific_impacts'][symbol]
+                total_impact += impact
+            
+            stress_test_results["scenario_impacts"][scenario['name']] = total_impact
+            
+            if abs(total_impact) > self.portfolio_value * self.risiko_grenzen.stress_test_verlust_limit:
+                stress_test_results["risk_warnings"].append(
+                    f"Kritischer Verlust im Szenario {scenario['name']}: {total_impact:.2f}"
+                )
+        
+        return stress_test_results
+
+    def trigger_circuit_breaker(self, reason: str) -> None:
+        """Aktiviert den Circuit Breaker"""
+        self.circuit_breaker = True
+        logger.warning(f"Circuit Breaker aktiviert: {reason}")
+        
+        # Hier können weitere Aktionen ausgelöst werden, z.B.:
+        # - Alle offenen Orders stornieren
+        # - Risikopositionen schließen
+        # - Benachrichtigungen senden
+
+    def reset_circuit_breaker(self) -> None:
+        """Setzt den Circuit Breaker zurück"""
+        self.circuit_breaker = False
+        logger.info("Circuit Breaker zurückgesetzt")
+
+    def analyze_drawdown(self, portfolio_history: pd.DataFrame) -> Dict[str, Any]:
+        """Analysiert den historischen Drawdown"""
+        equity_curve = portfolio_history['portfolio_value']
+        rolling_max = equity_curve.expanding().max()
+        drawdown = (rolling_max - equity_curve) / rolling_max
+        
+        return {
+            "current_drawdown": self.current_drawdown,
+            "max_historical_drawdown": drawdown.max(),
+            "avg_drawdown": drawdown.mean(),
+            "drawdown_periods": self._identify_drawdown_periods(drawdown),
+            "recovery_times": self._calculate_recovery_times(drawdown)
         }
 
-        # Berechne Sektor-Exposure
-        total_exposure = 0.0
-        for position in positions:
-            sektor = position.get("sektor", "Unbekannt")
-            position_value = float(position.get("position_size", 0))
-            total_exposure += position_value
-            
-            if sektor in risk_assessment["sektor_exposure"]:
-                risk_assessment["sektor_exposure"][sektor] += position_value
-            else:
-                risk_assessment["sektor_exposure"][sektor] = position_value
-
-        # Prüfe Sektor-Limits
-        for sektor, exposure in risk_assessment["sektor_exposure"].items():
-            exposure_percent = exposure / portfolio_value
-            if exposure_percent > self.risiko_grenzen.max_sektor_exposure:
-                risk_assessment["warnungen"].append(
-                    f"Zu hohe Exposure im Sektor {sektor} ({exposure_percent*100:.1f}%)"
-                )
-                risk_assessment["empfehlungen"].append({
-                    "typ": "reduce_sector",
-                    "sektor": sektor,
-                    "ziel_exposure": portfolio_value * self.risiko_grenzen.max_sektor_exposure
+    def _identify_drawdown_periods(self, drawdown: pd.Series) -> List[Dict[str, Any]]:
+        """Identifiziert signifikante Drawdown-Perioden"""
+        significant_drawdowns = []
+        in_drawdown = False
+        start_idx = None
+        
+        for idx, value in drawdown.items():
+            if not in_drawdown and value < -0.05:  # Start eines signifikanten Drawdowns
+                in_drawdown = True
+                start_idx = idx
+            elif in_drawdown and value > -0.02:  # Ende eines Drawdowns
+                in_drawdown = False
+                significant_drawdowns.append({
+                    "start_date": start_idx,
+                    "end_date": idx,
+                    "max_drawdown": drawdown[start_idx:idx].min(),
+                    "duration_days": (idx - start_idx).days
                 })
+        
+        return significant_drawdowns
 
-        # Berechne Diversifikation
-        num_positions = len(positions)
-        if num_positions < self.risiko_grenzen.min_diversifikation:
-            risk_assessment["warnungen"].append(
-                f"Zu wenig Diversifikation (minimum {self.risiko_grenzen.min_diversifikation} Positionen)"
-            )
-            risk_assessment["empfehlungen"].append({
-                "typ": "increase_diversification",
-                "ziel_positionen": self.risiko_grenzen.min_diversifikation
-            })
-
-        # Berechne Liquidität
-        liquiditaet = portfolio_value - total_exposure
-        liquiditaets_quote = liquiditaet / portfolio_value
-        if liquiditaets_quote < self.risiko_grenzen.liquiditaets_reserve:
-            risk_assessment["warnungen"].append(
-                f"Liquiditätsreserve zu niedrig ({liquiditaets_quote*100:.1f}%)"
-            )
-            risk_assessment["empfehlungen"].append({
-                "typ": "increase_liquidity",
-                "ziel_liquiditaet": portfolio_value * self.risiko_grenzen.liquiditaets_reserve
-            })
-
-        risk_assessment["liquiditaet"] = liquiditaets_quote
-        return risk_assessment
+    def _calculate_recovery_times(self, drawdown: pd.Series) -> Dict[str, float]:
+        """Berechnet durchschnittliche Erholungszeiten aus Drawdowns"""
+        recovery_times = []
+        in_drawdown = False
+        start_idx = None
+        
+        for idx, value in drawdown.items():
+            if not in_drawdown and value < -0.05:
+                in_drawdown = True
+                start_idx = idx
+            elif in_drawdown and value == 0:
+                recovery_times.append((idx - start_idx).days)
+                in_drawdown = False
+        
+        return {
+            "avg_recovery_days": np.mean(recovery_times) if recovery_times else 0,
+            "max_recovery_days": max(recovery_times) if recovery_times else 0,
+            "min_recovery_days": min(recovery_times) if recovery_times else 0
+        }
 
     def calculate_position_sizing(
         self,
@@ -204,41 +287,6 @@ class RiskManager:
             self._save_config()
         except Exception as e:
             logger.error(f"Fehler beim Aktualisieren der Risikolimits: {str(e)}")
-
-    def analyze_drawdown(self, portfolio_history: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """
-        Analysiert den Drawdown und gibt Warnungen aus
-        """
-        if not portfolio_history:
-            return {"max_drawdown": 0.0, "current_drawdown": 0.0, "warnungen": []}
-
-        values = [entry["portfolio_value"] for entry in portfolio_history]
-        peak = values[0]
-        max_drawdown = 0.0
-        current_drawdown = 0.0
-
-        for value in values:
-            if value > peak:
-                peak = value
-            drawdown = (peak - value) / peak
-            max_drawdown = max(max_drawdown, drawdown)
-            if value == values[-1]:
-                current_drawdown = drawdown
-
-        result = {
-            "max_drawdown": max_drawdown,
-            "current_drawdown": current_drawdown,
-            "warnungen": []
-        }
-
-        if current_drawdown > self.risiko_grenzen.max_drawdown:
-            result["warnungen"].append({
-                "typ": "drawdown_limit",
-                "message": f"Drawdown ({current_drawdown*100:.1f}%) überschreitet Limit von {self.risiko_grenzen.max_drawdown*100}%",
-                "empfehlung": "Risikoreduktion erforderlich"
-            })
-
-        return result
 
     def _emergency_shutdown(self):
         """Notfall-Prozedur bei kritischen Fehlern"""

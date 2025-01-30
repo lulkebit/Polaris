@@ -2,32 +2,40 @@ from typing import Dict, Any, List, Optional, Tuple
 import pandas as pd
 import numpy as np
 from datetime import datetime
-from ..backtesting.backtester import Backtester, BacktestConfig, BacktestResults
-from ..models.deepseek_model import DeepseekAnalyzer
-from ..risk.risk_manager import RiskManager
-from ..utils.logger import setup_logger
 import json
+import logging
+from dataclasses import dataclass
+from models.deepseek_model import DeepseekAnalyzer
+from backtesting.backtester import Backtester, BacktestConfig, BacktestResults
 
-logger = setup_logger(__name__)
+logger = logging.getLogger(__name__)
+
+@dataclass
+class OptimizationConfig:
+    max_iterations: int = 50
+    population_size: int = 20
+    mutation_rate: float = 0.1
+    crossover_rate: float = 0.7
+    optimization_metric: str = "sharpe_ratio"  # oder "total_return", "sortino_ratio", etc.
+    min_trades: int = 20
+    min_win_rate: float = 0.4
+    max_drawdown_limit: float = 0.2
+    min_profit_factor: float = 1.2
 
 class StrategyOptimizer:
-    def __init__(self):
+    def __init__(self, config: Optional[OptimizationConfig] = None):
+        self.config = config or OptimizationConfig()
         self.model = DeepseekAnalyzer()
-        self.risk_manager = RiskManager()
         self.optimization_history: List[Dict[str, Any]] = []
         self.best_strategy: Optional[Dict[str, Any]] = None
         self.best_results: Optional[BacktestResults] = None
-        
-        # Optimierungsziele
         self.target_metrics = {
-            'min_sharpe_ratio': 1.5,
-            'max_drawdown_limit': 0.15,
-            'min_win_rate': 0.55,
-            'min_profit_factor': 1.5,
-            'min_annual_return': 0.12,
-            'max_volatility': 0.20
+            "min_sharpe_ratio": 1.0,
+            "max_drawdown_limit": 0.15,
+            "min_win_rate": 0.55,
+            "min_profit_factor": 1.5
         }
-
+        
     def optimize_strategy(
         self,
         market_data: pd.DataFrame,
@@ -35,9 +43,8 @@ class StrategyOptimizer:
         max_iterations: int = 10,
         optimization_period: str = "1Y"
     ) -> Tuple[Dict[str, Any], BacktestResults]:
-        """
-        Führt eine KI-gesteuerte Strategieoptimierung durch
-        """
+        """Führt eine KI-gesteuerte Strategieoptimierung durch"""
+        
         logger.info("Starte KI-gesteuerte Strategieoptimierung")
         
         try:
@@ -76,72 +83,40 @@ class StrategyOptimizer:
                 self._ai_analyze_and_improve(iteration)
             
             if self.best_strategy is None:
-                logger.warning("Keine zufriedenstellende Strategie gefunden")
-                self.best_strategy = self.optimization_history[-1]['strategy_config']
-                self.best_results = self.optimization_history[-1]['results']
-            
+                raise ValueError("Keine gültige Strategie gefunden")
+                
             return self.best_strategy, self.best_results
             
         except Exception as e:
-            logger.error(f"Fehler während der Strategieoptimierung: {str(e)}")
+            logger.error(f"Fehler bei der Strategieoptimierung: {str(e)}")
             raise
 
     def _generate_strategy_config(self, iteration: int) -> Dict[str, Any]:
-        """Generiert eine neue Strategiekonfiguration basierend auf bisherigen Ergebnissen"""
-        try:
-            # Erstelle Prompt für die KI
-            history_data = json.dumps(self.optimization_history) if self.optimization_history else "Keine bisherigen Daten"
-            
-            prompt = f"""Analysiere die bisherigen Optimierungsergebnisse und generiere eine verbesserte Handelsstrategie-Konfiguration.
-
-            Optimierungshistorie:
-            {history_data}
-
-            Aktuelle Iteration: {iteration}
-            
-            Optimierungsziele:
-            {json.dumps(self.target_metrics, indent=2)}
-
-            Erstelle eine Konfiguration im folgenden Format:
-            {{
-                "risk_management": {{
-                    "position_size_limit": float,
-                    "stop_loss_atr_multiple": float,
-                    "take_profit_atr_multiple": float,
-                    "max_positions": int,
-                    "sector_exposure_limit": float
-                }},
-                "entry_conditions": {{
-                    "min_volatility": float,
-                    "min_volume": float,
-                    "trend_strength": float,
-                    "correlation_threshold": float
-                }},
-                "exit_conditions": {{
-                    "profit_taking_threshold": float,
-                    "max_loss_threshold": float,
-                    "trend_reversal_threshold": float
-                }},
-                "timing": {{
-                    "holding_period": str,
-                    "rebalancing_frequency": str,
-                    "entry_timing_factors": List[str]
-                }}
-            }}
-            """
-            
-            # Hole KI-Empfehlung
-            strategy_config = self.model.generate_strategy_config(prompt)
-            
-            # Validiere und bereinige Konfiguration
-            strategy_config = self._validate_strategy_config(strategy_config)
-            
-            return strategy_config
-            
-        except Exception as e:
-            logger.error(f"Fehler bei der Strategiegenerierung: {str(e)}")
-            # Fallback auf Standardkonfiguration
+        """Generiert eine neue Strategiekonfiguration"""
+        if iteration == 0 or not self.optimization_history:
+            # Erste Iteration: Verwende Standardkonfiguration
             return self._get_default_strategy_config()
+        
+        # Analysiere bisherige Ergebnisse
+        previous_results = [
+            {
+                'config': hist['strategy_config'],
+                'performance': self._calculate_fitness(hist['results'])
+            }
+            for hist in self.optimization_history
+        ]
+        
+        # Sortiere nach Performance
+        previous_results.sort(key=lambda x: x['performance'], reverse=True)
+        
+        # Wähle die besten Konfigurationen für Kreuzung
+        top_configs = [r['config'] for r in previous_results[:2]]
+        
+        # Generiere neue Konfiguration durch Kreuzung und Mutation
+        new_config = self._crossover_configs(top_configs[0], top_configs[1])
+        new_config = self._mutate_config(new_config)
+        
+        return self._validate_strategy_config(new_config)
 
     def _run_backtest(
         self,
@@ -173,20 +148,20 @@ class StrategyOptimizer:
         analysis = {
             'metrics_evaluation': {
                 'sharpe_ratio': {
-                    'value': results.sharpe_ratio,
-                    'target_achieved': results.sharpe_ratio >= self.target_metrics['min_sharpe_ratio']
+                    'value': results.performance_summary['sharpe_ratio'],
+                    'target_achieved': results.performance_summary['sharpe_ratio'] >= self.target_metrics['min_sharpe_ratio']
                 },
                 'max_drawdown': {
-                    'value': results.max_drawdown,
-                    'target_achieved': results.max_drawdown <= self.target_metrics['max_drawdown_limit']
+                    'value': results.performance_summary['max_drawdown'],
+                    'target_achieved': results.performance_summary['max_drawdown'] <= self.target_metrics['max_drawdown_limit']
                 },
                 'win_rate': {
-                    'value': results.win_rate,
-                    'target_achieved': results.win_rate >= self.target_metrics['min_win_rate']
+                    'value': results.performance_summary['win_rate'],
+                    'target_achieved': results.performance_summary['win_rate'] >= self.target_metrics['min_win_rate']
                 },
                 'profit_factor': {
-                    'value': results.profit_factor,
-                    'target_achieved': results.profit_factor >= self.target_metrics['min_profit_factor']
+                    'value': results.performance_summary['profit_factor'],
+                    'target_achieved': results.performance_summary['profit_factor'] >= self.target_metrics['min_profit_factor']
                 }
             },
             'risk_assessment': {
@@ -206,72 +181,102 @@ class StrategyOptimizer:
         return analysis
 
     def _is_better_strategy(self, results: BacktestResults) -> bool:
-        """Prüft, ob die aktuelle Strategie besser ist als die bisherige beste"""
+        """Prüft, ob die neue Strategie besser ist als die bisherige beste"""
         if self.best_results is None:
             return True
             
-        # Gewichte verschiedene Faktoren
-        current_score = (
-            results.sharpe_ratio * 0.3 +
-            (1 - results.max_drawdown) * 0.2 +
-            results.win_rate * 0.2 +
-            results.profit_factor * 0.2 +
-            (1 - results.risk_metrics['volatility']) * 0.1
-        )
+        # Vergleiche basierend auf der konfigurierten Optimierungsmetrik
+        if self.config.optimization_metric == "sharpe_ratio":
+            return results.performance_summary['sharpe_ratio'] > self.best_results.performance_summary['sharpe_ratio']
+        elif self.config.optimization_metric == "total_return":
+            return results.performance_summary['total_return'] > self.best_results.performance_summary['total_return']
+        elif self.config.optimization_metric == "sortino_ratio":
+            return results.risk_metrics['sortino_ratio'] > self.best_results.risk_metrics['sortino_ratio']
         
-        best_score = (
-            self.best_results.sharpe_ratio * 0.3 +
-            (1 - self.best_results.max_drawdown) * 0.2 +
-            self.best_results.win_rate * 0.2 +
-            self.best_results.profit_factor * 0.2 +
-            (1 - self.best_results.risk_metrics['volatility']) * 0.1
-        )
-        
-        return current_score > best_score
+        return False
 
     def _goals_achieved(self, results: BacktestResults) -> bool:
         """Prüft, ob alle Optimierungsziele erreicht wurden"""
         return all([
-            results.sharpe_ratio >= self.target_metrics['min_sharpe_ratio'],
-            results.max_drawdown <= self.target_metrics['max_drawdown_limit'],
-            results.win_rate >= self.target_metrics['min_win_rate'],
-            results.profit_factor >= self.target_metrics['min_profit_factor'],
-            results.performance_summary['annualized_return'] >= self.target_metrics['min_annual_return'],
-            results.risk_metrics['volatility'] <= self.target_metrics['max_volatility']
+            results.performance_summary['sharpe_ratio'] >= self.target_metrics['min_sharpe_ratio'],
+            results.performance_summary['max_drawdown'] <= self.target_metrics['max_drawdown_limit'],
+            results.performance_summary['win_rate'] >= self.target_metrics['min_win_rate'],
+            results.performance_summary['profit_factor'] >= self.target_metrics['min_profit_factor'],
+            len(results.trades) >= self.config.min_trades
         ])
 
-    def _ai_analyze_and_improve(self, iteration: int) -> None:
-        """Lässt die KI die Ergebnisse analysieren und Verbesserungen vorschlagen"""
-        try:
-            # Bereite Daten für die Analyse vor
-            current_results = self.optimization_history[-1]
-            historical_data = self.optimization_history[:-1] if len(self.optimization_history) > 1 else []
-            
-            prompt = f"""Analysiere die Optimierungsergebnisse und schlage Verbesserungen vor.
-            
-            Aktuelle Ergebnisse:
-            {json.dumps(current_results, indent=2)}
-            
-            Historische Optimierungen:
-            {json.dumps(historical_data, indent=2)}
-            
-            Optimierungsziele:
-            {json.dumps(self.target_metrics, indent=2)}
-            
-            Erstelle eine detaillierte Analyse mit:
-            1. Hauptproblemen der aktuellen Strategie
-            2. Erfolgreichen Aspekten, die beibehalten werden sollten
-            3. Konkrete Verbesserungsvorschläge
-            4. Empfehlungen für die nächste Iteration
-            """
-            
-            analysis = self.model.analyze_optimization_results(prompt)
-            
-            # Speichere KI-Analyse
-            self.optimization_history[-1]['ai_analysis'] = analysis
-            
-        except Exception as e:
-            logger.error(f"Fehler bei der KI-Analyse: {str(e)}")
+    def _calculate_fitness(self, results: BacktestResults) -> float:
+        """Berechnet den Fitness-Wert einer Strategie"""
+        metrics = results.performance_summary
+        
+        # Gewichte für verschiedene Metriken
+        weights = {
+            'sharpe_ratio': 0.3,
+            'sortino_ratio': 0.2,
+            'win_rate': 0.15,
+            'profit_factor': 0.15,
+            'max_drawdown': 0.2
+        }
+        
+        # Normalisiere Metriken
+        normalized_metrics = {
+            'sharpe_ratio': max(0, min(1, metrics['sharpe_ratio'] / 3)),
+            'sortino_ratio': max(0, min(1, metrics['sortino_ratio'] / 3)),
+            'win_rate': metrics['win_rate'],
+            'profit_factor': max(0, min(1, (metrics['profit_factor'] - 1) / 2)),
+            'max_drawdown': max(0, 1 - metrics['max_drawdown'] / 0.4)
+        }
+        
+        # Berechne gewichteten Fitness-Wert
+        fitness = sum(
+            normalized_metrics[metric] * weight
+            for metric, weight in weights.items()
+        )
+        
+        return fitness
+
+    def _crossover_configs(self, config1: Dict[str, Any], config2: Dict[str, Any]) -> Dict[str, Any]:
+        """Führt eine Kreuzung zwischen zwei Strategiekonfigurationen durch"""
+        new_config = {}
+        
+        for key in config1.keys():
+            if isinstance(config1[key], dict):
+                new_config[key] = self._crossover_configs(config1[key], config2[key])
+            else:
+                # Wähle zufällig zwischen den Werten oder berechne den Durchschnitt
+                if np.random.random() < self.config.crossover_rate:
+                    new_config[key] = config1[key]
+                else:
+                    if isinstance(config1[key], (int, float)):
+                        new_config[key] = (config1[key] + config2[key]) / 2
+                    else:
+                        new_config[key] = config2[key]
+        
+        return new_config
+
+    def _mutate_config(self, config: Dict[str, Any]) -> Dict[str, Any]:
+        """Führt Mutationen in der Strategiekonfiguration durch"""
+        mutated_config = {}
+        
+        for key, value in config.items():
+            if isinstance(value, dict):
+                mutated_config[key] = self._mutate_config(value)
+            else:
+                if np.random.random() < self.config.mutation_rate:
+                    if isinstance(value, float):
+                        # Mutiere Float-Werte um ±20%
+                        mutation_factor = 1 + (np.random.random() - 0.5) * 0.4
+                        mutated_config[key] = value * mutation_factor
+                    elif isinstance(value, int):
+                        # Mutiere Integer-Werte um ±2
+                        mutation = np.random.randint(-2, 3)
+                        mutated_config[key] = max(1, value + mutation)
+                    else:
+                        mutated_config[key] = value
+                else:
+                    mutated_config[key] = value
+        
+        return mutated_config
 
     def _get_ai_insights(self, results: BacktestResults, strategy_config: Dict[str, Any]) -> Dict[str, Any]:
         """Generiert KI-basierte Einblicke in die Strategie-Performance"""
@@ -300,6 +305,38 @@ class StrategyOptimizer:
         except Exception as e:
             logger.error(f"Fehler bei der Generierung von KI-Einblicken: {str(e)}")
             return {}
+
+    def _get_default_strategy_config(self) -> Dict[str, Any]:
+        """Liefert die Standard-Strategiekonfiguration"""
+        return {
+            'risk_management': {
+                'position_size_limit': 0.05,
+                'stop_loss_atr_multiple': 2.0,
+                'take_profit_atr_multiple': 3.0,
+                'max_positions': 10,
+                'sector_exposure_limit': 0.20
+            },
+            'entry_conditions': {
+                'min_volatility': 0.10,
+                'min_volume': 100000,
+                'trend_strength': 0.6,
+                'correlation_threshold': 0.7
+            },
+            'exit_conditions': {
+                'profit_taking_threshold': 0.15,
+                'max_loss_threshold': 0.10,
+                'trend_reversal_threshold': 0.5
+            },
+            'timing': {
+                'holding_period': '3M',
+                'rebalancing_frequency': '1W',
+                'entry_timing_factors': [
+                    'momentum',
+                    'volatility',
+                    'volume'
+                ]
+            }
+        }
 
     def _validate_strategy_config(self, config: Dict[str, Any]) -> Dict[str, Any]:
         """Validiert und bereinigt die Strategiekonfiguration"""
@@ -382,34 +419,37 @@ class StrategyOptimizer:
         
         return config
 
-    def _get_default_strategy_config(self) -> Dict[str, Any]:
-        """Liefert eine Standard-Strategiekonfiguration"""
-        return {
-            'risk_management': {
-                'position_size_limit': 0.05,
-                'stop_loss_atr_multiple': 2.0,
-                'take_profit_atr_multiple': 3.0,
-                'max_positions': 10,
-                'sector_exposure_limit': 0.20
-            },
-            'entry_conditions': {
-                'min_volatility': 0.01,
-                'min_volume': 100000,
-                'trend_strength': 0.6,
-                'correlation_threshold': 0.7
-            },
-            'exit_conditions': {
-                'profit_taking_threshold': 0.2,
-                'max_loss_threshold': 0.1,
-                'trend_reversal_threshold': 0.5
-            },
-            'timing': {
-                'holding_period': '3M',
-                'rebalancing_frequency': '1W',
-                'entry_timing_factors': [
-                    'trend_following',
-                    'momentum',
-                    'volatility_breakout'
-                ]
-            }
-        } 
+    def _ai_analyze_and_improve(self, iteration: int) -> None:
+        """Lässt die KI die Ergebnisse analysieren und Verbesserungen vorschlagen"""
+        if not self.optimization_history:
+            return
+            
+        try:
+            # Bereite Daten für die Analyse vor
+            current_results = self.optimization_history[-1]
+            
+            prompt = f"""Analysiere die Optimierungsergebnisse der Iteration {iteration}:
+            
+            Performance:
+            {json.dumps(current_results['results'].performance_summary, indent=2)}
+            
+            Konfiguration:
+            {json.dumps(current_results['strategy_config'], indent=2)}
+            
+            Analyse:
+            {json.dumps(current_results['analysis'], indent=2)}
+            
+            Schlage Verbesserungen vor für:
+            1. Risk Management Parameter
+            2. Entry/Exit Bedingungen
+            3. Timing Parameter
+            """
+            
+            # Hole KI-Vorschläge
+            improvements = self.model.get_strategy_improvements(prompt)
+            
+            # Speichere Vorschläge in der Historie
+            self.optimization_history[-1]['ai_improvements'] = improvements
+            
+        except Exception as e:
+            logger.error(f"Fehler bei der KI-Analyse: {str(e)}") 

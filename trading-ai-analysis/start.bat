@@ -106,6 +106,25 @@ if errorlevel 1 (
 echo [92mDatenbankverbindung erfolgreich hergestellt[0m
 echo.
 
+:: Frage nach Analysemodus
+echo.
+echo Wählen Sie den Analysemodus:
+echo [1] Neue Analyse durchführen
+echo [2] Vorhandene Daten aus der Datenbank verwenden
+set /p ANALYSIS_MODE="Ihre Wahl (1-2): "
+
+if "%ANALYSIS_MODE%"=="1" (
+    set ANALYSIS_MODE=new
+    echo Neue Analyse wird durchgeführt...
+) else if "%ANALYSIS_MODE%"=="2" (
+    set ANALYSIS_MODE=existing
+    echo Vorhandene Daten werden verwendet...
+) else (
+    set ANALYSIS_MODE=new
+    echo Ungültige Eingabe - Neue Analyse wird durchgeführt...
+)
+echo.
+
 :: Frage nach Performance-Modus
 echo Wählen Sie den Performance-Modus:
 echo [1] Normal     (Beste Qualität, hoher Ressourcenverbrauch)
@@ -139,7 +158,8 @@ echo - Verbindung zur Datenbank hergestellt
 echo - Analyse-Scheduler wird gestartet
 echo.
 
-python src/main.py
+set PYTHONPATH=%CD%\src
+python src/main.py --mode %ANALYSIS_MODE% --performance %PERFORMANCE_MODE%
 
 echo.
 echo Trading AI Analysis läuft...

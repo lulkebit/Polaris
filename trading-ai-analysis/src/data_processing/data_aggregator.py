@@ -3,6 +3,8 @@ import pandas as pd
 import os
 from dotenv import load_dotenv
 from utils.logger import setup_logger
+from datetime import datetime, timedelta
+from typing import Optional
 
 logger = setup_logger(__name__)
 
@@ -78,3 +80,56 @@ def create_combined_market_data():
     except Exception as e:
         logger.error(f"Fehler bei der Datenaggregation: {str(e)}")
         raise 
+
+class DataAggregator:
+    def __init__(self):
+        self.engine = get_database_connection()
+        self.logger = logger
+
+    def get_market_data(self, days: int = 365) -> pd.DataFrame:
+        """Holt Marktdaten für den angegebenen Zeitraum"""
+        self.logger.info(f"Hole Marktdaten für die letzten {days} Tage")
+        
+        try:
+            end_date = datetime.now()
+            start_date = end_date - timedelta(days=days)
+            
+            query = f"""
+                SELECT *
+                FROM market_data_combined
+                WHERE date >= '{start_date.date()}'
+                AND date <= '{end_date.date()}'
+                ORDER BY date ASC, symbol ASC
+            """
+            
+            df = pd.read_sql(query, self.engine)
+            self.logger.info(f"Erfolgreich {len(df)} Marktdatensätze geladen")
+            return df
+            
+        except Exception as e:
+            self.logger.error(f"Fehler beim Laden der Marktdaten: {str(e)}")
+            return pd.DataFrame()  # Leerer DataFrame im Fehlerfall
+
+    def get_news_data(self, days: int = 365) -> pd.DataFrame:
+        """Holt Nachrichtendaten für den angegebenen Zeitraum"""
+        self.logger.info(f"Hole Nachrichtendaten für die letzten {days} Tage")
+        
+        try:
+            end_date = datetime.now()
+            start_date = end_date - timedelta(days=days)
+            
+            query = f"""
+                SELECT timestamp, title, description, "publishedAt", url, sentiment
+                FROM news
+                WHERE "publishedAt" >= '{start_date.date()}'
+                AND "publishedAt" <= '{end_date.date()}'
+                ORDER BY "publishedAt" DESC
+            """
+            
+            df = pd.read_sql(query, self.engine)
+            self.logger.info(f"Erfolgreich {len(df)} Nachrichtendatensätze geladen")
+            return df
+            
+        except Exception as e:
+            self.logger.error(f"Fehler beim Laden der Nachrichtendaten: {str(e)}")
+            return pd.DataFrame()  # Leerer DataFrame im Fehlerfall 

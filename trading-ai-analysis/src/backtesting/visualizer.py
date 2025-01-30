@@ -2,11 +2,25 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from .backtester import BacktestResults
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from datetime import datetime
+import logging
+from dataclasses import dataclass
+
+logger = logging.getLogger(__name__)
+
+@dataclass
+class BacktestResults:
+    equity_curve: pd.Series
+    trades: List[Dict[str, Any]]
+    monthly_returns: pd.Series
+    performance_summary: Dict[str, Any]
+    risk_metrics: Dict[str, Any]
+    position_history: List[Dict[str, Any]]
+    benchmark_comparison: Dict[str, Any]
 
 class BacktestVisualizer:
     def __init__(self, results: BacktestResults):
@@ -49,6 +63,17 @@ class BacktestVisualizer:
             ),
             row=1, col=1
         )
+        
+        if 'benchmark_values' in self.results.benchmark_comparison:
+            fig.add_trace(
+                go.Scatter(
+                    x=self.results.benchmark_comparison['benchmark_values'].index,
+                    y=self.results.benchmark_comparison['benchmark_values'].values,
+                    name='Benchmark',
+                    line=dict(color='gray', dash='dash')
+                ),
+                row=1, col=1
+            )
 
         # Monatliche Returns
         fig.add_trace(
@@ -62,11 +87,11 @@ class BacktestVisualizer:
         )
 
         # Drawdown Analyse
-        drawdown_series = self._calculate_drawdown_series()
+        drawdown = self._calculate_drawdown_series()
         fig.add_trace(
             go.Scatter(
-                x=drawdown_series.index,
-                y=drawdown_series.values * 100,
+                x=drawdown.index,
+                y=drawdown.values * 100,
                 name='Drawdown',
                 fill='tozeroy',
                 line=dict(color='red')
@@ -80,13 +105,13 @@ class BacktestVisualizer:
             go.Scatter(
                 x=position_sizes.index,
                 y=position_sizes.values,
-                name='Position Sizes',
-                mode='lines+markers'
+                name='Position Size',
+                line=dict(color='purple')
             ),
             row=2, col=2
         )
 
-        # Performance Metriken Tabelle
+        # Performance Tabelle
         performance_table = self._create_performance_table()
         fig.add_trace(
             go.Table(
@@ -152,7 +177,10 @@ class BacktestVisualizer:
             go.Bar(
                 x=trades_df.index,
                 y=trades_df['pnl'],
-                name='Trade PnL'
+                name='Trade PnL',
+                marker_color=trades_df['pnl'].apply(
+                    lambda x: 'green' if x > 0 else 'red'
+                )
             ),
             row=1, col=1
         )
@@ -162,7 +190,9 @@ class BacktestVisualizer:
         fig.add_trace(
             go.Histogram(
                 x=durations,
-                name='Trade Durations'
+                name='Trade Durations',
+                nbinsx=20,
+                marker_color='blue'
             ),
             row=1, col=2
         )
@@ -173,7 +203,8 @@ class BacktestVisualizer:
             go.Scatter(
                 x=trades_df.index,
                 y=cumulative_pnl,
-                name='Cumulative PnL'
+                name='Cumulative PnL',
+                line=dict(color='green')
             ),
             row=2, col=1
         )
@@ -182,19 +213,23 @@ class BacktestVisualizer:
         monthly_stats = self._calculate_monthly_win_loss(trades_df)
         fig.add_trace(
             go.Bar(
-                x=monthly_stats.index,
-                y=monthly_stats['win_rate'],
-                name='Monthly Win Rate'
+                x=monthly_stats.index.astype(str),
+                y=monthly_stats['win_rate'] * 100,
+                name='Win Rate',
+                marker_color='blue'
             ),
             row=2, col=2
         )
 
+        # Update Layout
         fig.update_layout(
-            height=1000,
-            width=1400,
-            title_text="Detailed Trade Analysis"
+            height=800,
+            width=1200,
+            title_text="Detailed Trade Analysis",
+            showlegend=True
         )
 
+        # Speichere Plot
         fig.write_html(output_path)
 
     def create_risk_report(self, output_path: str) -> None:
@@ -216,7 +251,8 @@ class BacktestVisualizer:
                 go.Scatter(
                     x=risk_metrics.index,
                     y=risk_metrics[metric],
-                    name=metric
+                    name=metric,
+                    line=dict(width=1)
                 ),
                 row=1, col=1
             )
@@ -229,7 +265,9 @@ class BacktestVisualizer:
         fig.add_trace(
             go.Histogram(
                 x=returns,
-                name='Returns Distribution'
+                name='Returns Distribution',
+                nbinsx=50,
+                marker_color='blue'
             ),
             row=1, col=2
         )
@@ -239,13 +277,15 @@ class BacktestVisualizer:
         fig.add_vline(x=var_99, line_dash="dash", line_color="darkred", row=1, col=2)
 
         # Position Correlation Matrix
-        correlation_matrix = self._calculate_position_correlations()
+        position_correlations = self._calculate_position_correlations()
         fig.add_trace(
             go.Heatmap(
-                z=correlation_matrix.values,
-                x=correlation_matrix.columns,
-                y=correlation_matrix.index,
-                colorscale='RdBu'
+                z=position_correlations.values,
+                x=position_correlations.columns,
+                y=position_correlations.index,
+                colorscale='RdBu',
+                zmin=-1,
+                zmax=1
             ),
             row=2, col=1
         )
@@ -254,19 +294,22 @@ class BacktestVisualizer:
         sector_exposure = self._calculate_sector_exposure()
         fig.add_trace(
             go.Pie(
-                labels=sector_exposure.index,
-                values=sector_exposure.values,
+                labels=list(sector_exposure.keys()),
+                values=list(sector_exposure.values()),
                 name='Sector Exposure'
             ),
             row=2, col=2
         )
 
+        # Update Layout
         fig.update_layout(
             height=1000,
             width=1400,
-            title_text="Risk Analysis Report"
+            title_text="Risk Analysis Report",
+            showlegend=True
         )
 
+        # Speichere Report
         fig.write_html(output_path)
 
     def _calculate_drawdown_series(self) -> pd.Series:
@@ -333,23 +376,12 @@ class BacktestVisualizer:
 
     def _calculate_trade_durations(self, trades_df: pd.DataFrame) -> pd.Series:
         """Berechnet die Handelsdauer für jeden Trade"""
-        trades_df['duration'] = pd.to_datetime(trades_df['timestamp'])
-        durations = []
-        
-        for symbol in trades_df['symbol'].unique():
-            symbol_trades = trades_df[trades_df['symbol'] == symbol].sort_values('timestamp')
-            buy_times = symbol_trades[symbol_trades['action'].isin(['BUY', 'PARTIAL_BUY'])]['timestamp']
-            sell_times = symbol_trades[symbol_trades['action'].isin(['SELL', 'PARTIAL_SELL'])]['timestamp']
-            
-            for buy, sell in zip(buy_times, sell_times):
-                duration = (sell - buy).total_seconds() / (24 * 60 * 60)  # Convert to days
-                durations.append(duration)
-                
-        return pd.Series(durations)
+        trades_df['duration'] = pd.to_datetime(trades_df['exit_time']) - pd.to_datetime(trades_df['entry_time'])
+        return trades_df['duration'].dt.total_seconds() / (24 * 60 * 60)  # Konvertiere zu Tagen
 
     def _calculate_monthly_win_loss(self, trades_df: pd.DataFrame) -> pd.DataFrame:
         """Berechnet monatliche Gewinn/Verlust-Statistiken"""
-        trades_df['month'] = pd.to_datetime(trades_df['timestamp']).dt.to_period('M')
+        trades_df['month'] = pd.to_datetime(trades_df['exit_time']).dt.to_period('M')
         monthly_stats = trades_df.groupby('month').agg({
             'pnl': ['count', lambda x: (x > 0).mean()]
         })
@@ -381,14 +413,14 @@ class BacktestVisualizer:
                 
         return position_values.corr()
 
-    def _calculate_sector_exposure(self) -> pd.Series:
-        """Berechnet die aktuelle Sektor-Exposure"""
-        latest_positions = self.results.position_history[-1]['positions']
+    def _calculate_sector_exposure(self) -> Dict[str, float]:
+        """Berechnet die aktuelle Sektorexposition"""
         sector_exposure = {}
+        latest_positions = self.results.position_history[-1]['positions']
+        total_value = sum(pos['value'] for pos in latest_positions.values())
         
-        for symbol, data in latest_positions.items():
-            sector = data.get('sector', 'Unknown')
-            value = data['value']
-            sector_exposure[sector] = sector_exposure.get(sector, 0) + value
-            
-        return pd.Series(sector_exposure) 
+        for position in latest_positions.values():
+            sector = position.get('sector', 'Unknown')
+            sector_exposure[sector] = sector_exposure.get(sector, 0) + position['value'] / total_value
+        
+        return sector_exposure 

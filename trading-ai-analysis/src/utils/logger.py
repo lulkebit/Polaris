@@ -43,13 +43,14 @@ class ColoredFormatter(logging.Formatter):
         record.levelname = orig_levelname
         return result
 
-def setup_logger(name):
+def setup_logger(name, log_to_console=True):
     """
     Konfiguriert und erstellt einen Logger mit dem angegebenen Namen.
     Enthält spezielle Anpassungen für KI-Analyse-Logging.
     
     Args:
         name: Name des Loggers (üblicherweise __name__)
+        log_to_console: Ob Logs auch in der Konsole ausgegeben werden sollen
         
     Returns:
         logging.Logger: Konfigurierter Logger
@@ -57,6 +58,9 @@ def setup_logger(name):
     # Erstelle Logger
     logger = logging.getLogger(name)
     logger.setLevel(logging.DEBUG)  # Debug-Level für detailliertere KI-Logs
+    
+    # Verhindere Weiterleitung an Parent-Logger
+    logger.propagate = False
     
     # Formatierung für Console (mit Farben)
     console_formatter = ColoredFormatter(
@@ -66,14 +70,20 @@ def setup_logger(name):
     
     # Formatierung für File (ohne Farben)
     file_formatter = logging.Formatter(
-        '%(asctime)s - %(levelname)-8s - %(message)s',
+        '%(asctime)s - %(name)s - %(levelname)-8s - %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S'
     )
     
-    # Console Handler
-    console_handler = logging.StreamHandler()
-    console_handler.setLevel(logging.INFO)
-    console_handler.setFormatter(console_formatter)
+    # Entferne existierende Handler
+    if logger.handlers:
+        logger.handlers.clear()
+    
+    # Console Handler (optional)
+    if log_to_console:
+        console_handler = logging.StreamHandler()
+        console_handler.setLevel(logging.INFO)
+        console_handler.setFormatter(console_formatter)
+        logger.addHandler(console_handler)
     
     # File Handler
     log_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'logs')
@@ -84,13 +94,6 @@ def setup_logger(name):
     file_handler = logging.FileHandler(log_file)
     file_handler.setLevel(logging.DEBUG)  # Debug-Level für detaillierte Logs in Datei
     file_handler.setFormatter(file_formatter)
-    
-    # Entferne existierende Handler
-    if logger.handlers:
-        logger.handlers.clear()
-    
-    # Füge Handler zum Logger hinzu
-    logger.addHandler(console_handler)
     logger.addHandler(file_handler)
     
     # Füge Extra-Methoden für KI-spezifisches Logging hinzu

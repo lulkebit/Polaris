@@ -10,9 +10,9 @@ import pandas as pd
 from contextlib import contextmanager
 from dotenv import load_dotenv
 import configparser
-from sqlalchemy import create_engine, text, Column, String, DateTime, JSON
+from sqlalchemy import create_engine, text, Column, String, DateTime, JSON, Integer
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import sessionmaker, Session
 import time
 
 # Füge den src-Ordner zum Python-Path hinzu
@@ -28,7 +28,20 @@ class AIAnalysis(Base):
     __tablename__ = 'ai_analysis'
     
     timestamp = Column(DateTime, primary_key=True)
-    analysis = Column(JSON)  # PostgreSQL JSONB Typ für effiziente JSON-Speicherung
+    analysis = Column(JSON(none_as_null=True))  # PostgreSQL JSONB Typ für effiziente JSON-Speicherung
+
+class TradingAIAnalysis(Base):
+    __tablename__ = 'trading_ai_analyses'
+    
+    id = Column(Integer, primary_key=True)
+    timestamp = Column(DateTime, nullable=False)
+    analysis_type = Column(String(50), nullable=False)
+    market_data_analysis = Column(JSON(none_as_null=True), nullable=False)
+    news_analysis = Column(JSON(none_as_null=True), nullable=False)
+    position_analysis = Column(JSON(none_as_null=True), nullable=False)
+    historical_analysis = Column(JSON(none_as_null=True), nullable=False)
+    recommendations = Column(JSON(none_as_null=True), nullable=False)
+    confidence_score = Column(Integer, nullable=False)
 
 class DatabaseManager:
     def __init__(self):
@@ -454,40 +467,67 @@ class DatabaseManager:
     def get_latest_analyses(self, limit: int = 10) -> list:
         """Holt die neuesten Analysen aus der Datenbank"""
         try:
-            analyses = self.session.query(AIAnalysis)\
-                .order_by(AIAnalysis.timestamp.desc())\
+            analyses = self.session.query(TradingAIAnalysis)\
+                .order_by(TradingAIAnalysis.timestamp.desc())\
                 .limit(limit)\
                 .all()
             
             return [
                 {
                     'timestamp': analysis.timestamp.isoformat(),
-                    'analysis': analysis.analysis
+                    'analysis_type': analysis.analysis_type,
+                    'market_data_analysis': analysis.market_data_analysis,
+                    'news_analysis': analysis.news_analysis,
+                    'position_analysis': analysis.position_analysis,
+                    'historical_analysis': analysis.historical_analysis,
+                    'recommendations': analysis.recommendations,
+                    'confidence_score': analysis.confidence_score
                 }
                 for analysis in analyses
             ]
             
         except Exception as e:
-            raise e
+            logger.error(f"Fehler beim Laden der neuesten Analysen: {str(e)}")
+            raise
 
     def get_analyses_by_timerange(self, start_date: datetime, end_date: datetime) -> list:
         """Holt Analysen in einem bestimmten Zeitraum"""
         try:
-            analyses = self.session.query(AIAnalysis)\
-                .filter(AIAnalysis.timestamp.between(start_date, end_date))\
-                .order_by(AIAnalysis.timestamp.desc())\
+            analyses = self.session.query(TradingAIAnalysis)\
+                .filter(TradingAIAnalysis.timestamp.between(start_date, end_date))\
+                .order_by(TradingAIAnalysis.timestamp.desc())\
                 .all()
             
             return [
                 {
                     'timestamp': analysis.timestamp.isoformat(),
-                    'analysis': analysis.analysis
+                    'analysis_type': analysis.analysis_type,
+                    'market_data_analysis': analysis.market_data_analysis,
+                    'news_analysis': analysis.news_analysis,
+                    'position_analysis': analysis.position_analysis,
+                    'historical_analysis': analysis.historical_analysis,
+                    'recommendations': analysis.recommendations,
+                    'confidence_score': analysis.confidence_score
                 }
                 for analysis in analyses
             ]
             
         except Exception as e:
-            raise e
+            logger.error(f"Fehler beim Laden der Analysen nach Zeitraum: {str(e)}")
+            raise
+
+    @contextmanager
+    def get_session(self):
+        """Stellt eine Datenbank-Session zur Verfügung"""
+        session = Session(bind=self.engine)
+        try:
+            yield session
+            session.commit()
+        except Exception as e:
+            session.rollback()
+            raise
+        finally:
+            session.close()
 
     def __del__(self):
         """Cleanup beim Beenden"""
