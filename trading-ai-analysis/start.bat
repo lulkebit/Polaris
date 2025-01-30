@@ -106,6 +106,17 @@ if errorlevel 1 (
 echo [92mDatenbankverbindung erfolgreich hergestellt[0m
 echo.
 
+:: Frage nach Performance-Modus
+set /p PERFORMANCE_MODE="Möchten Sie den Low-Performance-Modus aktivieren? (j/n): "
+if /i "%PERFORMANCE_MODE%"=="j" (
+    set PERFORMANCE_MODE=low
+    echo Low-Performance-Modus aktiviert
+) else (
+    set PERFORMANCE_MODE=normal
+    echo Normal-Performance-Modus aktiviert
+)
+echo.
+
 :: Starte KI-Analyse
 echo Starte KI-Analyse-System...
 echo - Deepseek 1.3B Modell wird geladen

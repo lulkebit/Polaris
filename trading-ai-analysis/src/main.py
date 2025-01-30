@@ -14,6 +14,11 @@ load_dotenv()
 # Logger einrichten
 logger = setup_logger(__name__)
 
+# Performance-Modus aus Umgebungsvariable lesen
+PERFORMANCE_MODE = os.getenv('PERFORMANCE_MODE', 'normal')
+if PERFORMANCE_MODE == 'low':
+    logger.info("Low-Performance-Modus aktiv - Reduzierte Datenmenge und Analysefrequenz")
+
 def get_database_connection():
     """Erstellt eine Datenbankverbindung mit den Umgebungsvariablen"""
     db_params = {
@@ -35,23 +40,38 @@ def fetch_latest_data():
         
         engine = get_database_connection()
         
-        # Hole die neuesten Marktdaten
-        market_data = pd.read_sql("""
-            SELECT * FROM market_data_combined
-            WHERE date >= current_date - interval '7 days'
-            ORDER BY date DESC
-        """, engine)
+        # Zeitfenster basierend auf Performance-Modus
+        days_window = 2 if PERFORMANCE_MODE == 'low' else 7
         
-        # Hole die neuesten Nachrichten
-        news_data = pd.read_sql("""
+        # Hole die neuesten Marktdaten mit reduzierter Auflösung im Low-Performance-Modus
+        if PERFORMANCE_MODE == 'low':
+            market_data = pd.read_sql(f"""
+                SELECT * FROM (
+                    SELECT DISTINCT ON (date_trunc('hour', date)) *
+                    FROM market_data_combined
+                    WHERE date >= current_date - interval '{days_window} days'
+                ) subq
+                ORDER BY date DESC
+            """, engine)
+        else:
+            market_data = pd.read_sql(f"""
+                SELECT * FROM market_data_combined
+                WHERE date >= current_date - interval '{days_window} days'
+                ORDER BY date DESC
+            """, engine)
+        
+        # Hole die neuesten Nachrichten mit reduzierter Menge im Low-Performance-Modus
+        news_limit = 50 if PERFORMANCE_MODE == 'low' else 200
+        news_data = pd.read_sql(f"""
             SELECT 
                 title,
                 description as content,
                 url,
                 "publishedAt" as published_at
             FROM news
-            WHERE "publishedAt" >= current_date - interval '7 days'
+            WHERE "publishedAt" >= current_date - interval '{days_window} days'
             ORDER BY "publishedAt" DESC
+            LIMIT {news_limit}
         """, engine)
         
         return market_data, news_data
@@ -99,9 +119,13 @@ if __name__ == "__main__":
     logger.info("Führe initiale Analyse durch...")
     run_analysis()
     
-    # Plane regelmäßige Analysen
-    logger.info("Konfiguriere stündliche Analysen")
-    schedule.every().hour.do(run_analysis)
+    # Plane regelmäßige Analysen basierend auf Performance-Modus
+    if PERFORMANCE_MODE == 'low':
+        logger.info("Konfiguriere 4-stündliche Analysen (Low-Performance-Modus)")
+        schedule.every(4).hours.do(run_analysis)
+    else:
+        logger.info("Konfiguriere stündliche Analysen")
+        schedule.every().hour.do(run_analysis)
     
     logger.info("Analyse-Scheduler gestartet")
     while True:

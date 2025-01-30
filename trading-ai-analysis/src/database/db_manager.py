@@ -10,6 +10,9 @@ import pandas as pd
 from contextlib import contextmanager
 from dotenv import load_dotenv
 import configparser
+from sqlalchemy import create_engine, text, Column, String, DateTime, JSON
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker
 
 # Füge den src-Ordner zum Python-Path hinzu
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -17,6 +20,14 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from utils.logger import setup_logger
 
 logger = setup_logger(__name__)
+
+Base = declarative_base()
+
+class AIAnalysis(Base):
+    __tablename__ = 'ai_analysis'
+    
+    timestamp = Column(DateTime, primary_key=True)
+    analysis = Column(JSON)  # PostgreSQL JSONB Typ für effiziente JSON-Speicherung
 
 class DatabaseManager:
     def __init__(self):
@@ -198,42 +209,22 @@ class DatabaseManager:
             logger.error(f"Fehler beim Speichern der Backtest-Ergebnisse: {str(e)}")
             raise
 
-    def save_ai_analysis(self, analysis: Dict[str, Any]) -> int:
-        """Speichert KI-Analysen"""
+    def save_ai_analysis(self, data: dict) -> None:
+        """Speichert eine AI-Analyse in der Datenbank"""
         try:
-            with self.get_connection() as conn:
-                cursor = conn.cursor()
-                
-                cursor.execute("""
-                    INSERT INTO trading_ai_analyses (
-                        timestamp,
-                        analysis_type,
-                        market_data_analysis,
-                        news_analysis,
-                        position_analysis,
-                        historical_analysis,
-                        recommendations,
-                        confidence_score
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                    RETURNING id
-                """, (
-                    datetime.now(),
-                    analysis.get('analyse_typ', 'unknown'),
-                    Json(analysis.get('market_data_analysis', {})),
-                    Json(analysis.get('news_analysis', {})),
-                    Json(analysis.get('position_analysis', {})),
-                    Json(analysis.get('historical_analysis', {})),
-                    Json(analysis.get('recommendations', [])),
-                    analysis.get('konfidenz_score', 0)
-                ))
-                
-                analysis_id = cursor.fetchone()[0]
-                conn.commit()
-                return analysis_id
-                
+            # Erstelle neuen Analyseeintrag
+            analysis = AIAnalysis(
+                timestamp=datetime.strptime(data['timestamp'], '%Y-%m-%d %H:%M:%S'),
+                analysis=json.loads(data['analysis']) if isinstance(data['analysis'], str) else data['analysis']
+            )
+            
+            # Füge zur Session hinzu und committe
+            self.session.add(analysis)
+            self.session.commit()
+            
         except Exception as e:
-            logger.error(f"Fehler beim Speichern der KI-Analyse: {str(e)}")
-            raise
+            self.session.rollback()
+            raise e
 
     def save_optimization_result(self, optimization: Dict[str, Any]) -> int:
         """Speichert Strategieoptimierungen"""
@@ -411,30 +402,45 @@ class DatabaseManager:
             """
             return pd.read_sql_query(query, conn, params=(backtest_id,))
 
-    def get_latest_ai_analysis(self) -> Dict[str, Any]:
-        """Lädt die neueste KI-Analyse"""
+    def get_latest_analyses(self, limit: int = 10) -> list:
+        """Holt die neuesten Analysen aus der Datenbank"""
         try:
-            with self.get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute("""
-                    SELECT * FROM trading_ai_analyses 
-                    ORDER BY timestamp DESC 
-                    LIMIT 1
-                """)
-                row = cursor.fetchone()
-                if row:
-                    return {
-                        'id': row[0],
-                        'timestamp': row[1],
-                        'analysis_type': row[2],
-                        'market_data_analysis': row[3],
-                        'news_analysis': row[4],
-                        'position_analysis': row[5],
-                        'historical_analysis': row[6],
-                        'recommendations': row[7],
-                        'confidence_score': row[8]
-                    }
-                return {}
+            analyses = self.session.query(AIAnalysis)\
+                .order_by(AIAnalysis.timestamp.desc())\
+                .limit(limit)\
+                .all()
+            
+            return [
+                {
+                    'timestamp': analysis.timestamp.isoformat(),
+                    'analysis': analysis.analysis
+                }
+                for analysis in analyses
+            ]
+            
         except Exception as e:
-            logger.error(f"Fehler beim Laden der KI-Analyse: {str(e)}")
-            return {} 
+            raise e
+
+    def get_analyses_by_timerange(self, start_date: datetime, end_date: datetime) -> list:
+        """Holt Analysen in einem bestimmten Zeitraum"""
+        try:
+            analyses = self.session.query(AIAnalysis)\
+                .filter(AIAnalysis.timestamp.between(start_date, end_date))\
+                .order_by(AIAnalysis.timestamp.desc())\
+                .all()
+            
+            return [
+                {
+                    'timestamp': analysis.timestamp.isoformat(),
+                    'analysis': analysis.analysis
+                }
+                for analysis in analyses
+            ]
+            
+        except Exception as e:
+            raise e
+
+    def __del__(self):
+        """Cleanup beim Beenden"""
+        if hasattr(self, 'session'):
+            self.session.close() 
