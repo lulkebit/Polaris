@@ -19,8 +19,8 @@ class AnalyseConfig:
     lookback_period: int = 30  # Tage für historische Analyse
     min_data_points: int = 20  # Minimum Datenpunkte für technische Analyse
     volatility_window: int = 20  # Fenster für Volatilitätsberechnung
-    correlation_threshold: float = 0.7  # Schwellenwert für Korrelationsanalyse
-    trend_strength_threshold: float = 0.6  # Schwellenwert für Trendstärke
+    correlation_threshold: float = 0.6  # Schwellenwert für Korrelationsanalyse (reduziert von 0.7)
+    trend_strength_threshold: float = 0.5  # Schwellenwert für Trendstärke (reduziert von 0.6)
     volume_ma_period: int = 20  # Periode für Volumen-Moving-Average
 
 @dataclass
@@ -1232,4 +1232,36 @@ class MarketAnalyzer:
         for signal in signals:
             signal_type = signal.get("type", "unknown")
             signal_types[signal_type] = signal_types.get(signal_type, 0) + 1
-        return signal_types 
+        return signal_types
+
+    def analyze_market_conditions(self, market_data: pd.DataFrame) -> Dict[str, Any]:
+        """Analysiert Marktbedingungen und generiert Signale"""
+        try:
+            # Calculate indicators first
+            indicators = self._calculate_technical_indicators(market_data)
+            
+            # Then analyze market conditions with the indicators
+            conditions = self._analyze_market_conditions(market_data, indicators)
+            
+            # Detailliertes Logging der Marktbedingungen
+            logger.info(
+                "Marktbedingungen analysiert",
+                extra={
+                    "market_conditions": {
+                        "trend": conditions.trend,
+                        "volatility": conditions.volatility,
+                        "volume_profile": conditions.volume_profile,
+                        "market_phase": conditions.market_phase,
+                        "risk_level": conditions.risk_level
+                    }
+                }
+            )
+            
+            return {
+                "market_conditions": conditions.__dict__,
+                "technical_indicators": indicators
+            }
+            
+        except Exception as e:
+            logger.error(f"Fehler bei der Marktanalyse: {str(e)}", exc_info=True)
+            return {} 
