@@ -7,6 +7,7 @@ import time
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, List
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from data_processing.market_data_aggregator import get_database_connection
 
 load_dotenv()
 
@@ -93,49 +94,71 @@ def fetch_stock_data(symbol: str, interval: str = "1d", period: str = "1mo") -> 
 
 def fetch_multiple_stocks(symbols: list, interval: str = "1d", period: str = "1mo") -> dict:
     """
-    Hole Daten für mehrere Aktien parallel und kombiniere sie in einem Dictionary
+    Lädt Daten für mehrere Aktien parallel herunter.
     """
-    all_data = {}
-    total_symbols = len(symbols)
-    successful_fetches = 0
-    failed_fetches = 0
-    
-    def fetch_with_retry(symbol):
-        return symbol, fetch_stock_data(symbol, interval, period)
+    results = {}
     
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        future_to_symbol = {executor.submit(fetch_with_retry, symbol): symbol for symbol in symbols}
+        future_to_symbol = {
+            executor.submit(fetch_stock_data, symbol, interval, period): symbol 
+            for symbol in symbols
+        }
         
         for future in as_completed(future_to_symbol):
             symbol = future_to_symbol[future]
             try:
-                symbol, df = future.result()
-                if df is not None and not df.empty:
-                    all_data[symbol] = df
-                    successful_fetches += 1
-                    logger.info(f"Daten für {symbol} erfolgreich geholt: {len(df)} Datenpunkte")
-                else:
-                    failed_fetches += 1
-                    logger.warning(f"Keine Daten für {symbol} verfügbar")
+                data = future.result()
+                if data is not None:
+                    results[symbol] = data
             except Exception as e:
-                failed_fetches += 1
-                logger.error(f"Fehler beim Abrufen von {symbol}: {str(e)}")
+                logger.error(f"Fehler beim Laden der Daten für {symbol}: {str(e)}")
     
-    # Zusammenfassung am Ende
-    logger.info(f"Abruf abgeschlossen: {successful_fetches} erfolgreich, {failed_fetches} fehlgeschlagen")
-    if failed_fetches > 0:
-        logger.warning(f"{failed_fetches} Symbole konnten nicht abgerufen werden.")
-    
-    return all_data
+    return results
 
-# Beispielaufruf
-if __name__ == "__main__":
+def save_to_database(data: Dict[str, pd.DataFrame]) -> None:
+    """
+    Speichert die Marktdaten in der Datenbank.
+    """
+    engine = get_database_connection()
+    
+    for symbol, df in data.items():
+        if df is not None and not df.empty:
+            # Bereinige die Spaltennamen
+            df = df.rename(columns={
+                'Date': 'timestamp',
+                'Dividends': 'dividends',
+                'Stock Splits': 'stock_splits'
+            })
+            
+            table_name = f"market_data_{symbol.lower()}"
+            try:
+                df.to_sql(table_name, engine, if_exists='append', index=True, index_label='timestamp')
+                logger.info(f"Daten für {symbol} erfolgreich in der DB gespeichert")
+            except Exception as e:
+                logger.error(f"Fehler beim Speichern der Daten für {symbol}: {str(e)}")
+
+def update_market_data():
+    """
+    Hauptfunktion zum Aktualisieren der Marktdaten.
+    """
+    symbols = ["aapl", "msft", "googl", "amzn", "meta", "nvda", "tsla", "jpm", "v", "wmt"]
+    
     try:
-        # Hole Daten für mehrere Aktien
-        symbols = ["AAPL", "MSFT", "GOOGL"]
-        # Verwende korrekte Parameter
-        data = fetch_multiple_stocks(symbols, interval="1d", period="1mo")
-        for symbol, df in data.items():
-            logger.info(f"Testaufruf für {symbol}: {len(df)} Datenpunkte über {len(df.index.unique())} Tage")
+        # Hole neue Daten
+        market_data = fetch_multiple_stocks(symbols)
+        
+        # Speichere in einzelnen Tabellen
+        save_to_database(market_data)
+        
+        # Aggregiere in die kombinierte Tabelle
+        from data_processing.market_data_aggregator import aggregate_market_data
+        aggregate_market_data(symbols)
+        
+        logger.info("Marktdaten-Update erfolgreich abgeschlossen")
+        
     except Exception as e:
-        logger.error(f"Testaufruf fehlgeschlagen: {str(e)}")
+        logger.error(f"Fehler beim Update der Marktdaten: {str(e)}")
+        raise
+
+if __name__ == "__main__":
+    update_market_data()
