@@ -105,7 +105,8 @@ class AnalysisPipeline:
                 features = self._extract_features(symbol_data)
                 inputs = self.tokenizer(str(features), return_tensors="pt", truncation=False).to(self.model.device)
                 outputs = self.model.generate(**inputs, max_new_tokens=20000, pad_token_id=self.tokenizer.eos_token_id)
-                prediction = float(self.tokenizer.decode(outputs[0], skip_special_tokens=True))
+                raw_prediction = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
+                prediction = self._extract_prediction_value(raw_prediction)
                 confidence = self._calculate_confidence(prediction)
                 
                 self.logger.log_prediction(
@@ -115,11 +116,11 @@ class AnalysisPipeline:
                     features=features
                 )
                 
-                predictions = predictions.append({
+                predictions = pd.concat([predictions, pd.DataFrame([{
                     'symbol': symbol,
                     'prediction': prediction,
                     'confidence': confidence
-                }, ignore_index=True)
+                }])], ignore_index=True)
             
             self.console.success(f"KI-Analyse abgeschlossen für {total_symbols} Symbole")
             
@@ -267,6 +268,19 @@ class AnalysisPipeline:
         confidence = 1 / (1 + np.exp(-abs(prediction)))
         return float(confidence)
 
+    def _extract_prediction_value(self, model_output: str) -> float:
+        """Extrahiert den numerischen Vorhersagewert aus der Modellausgabe."""
+        try:
+            # Versuche direkte Konvertierung
+            return float(model_output)
+        except ValueError:
+            # Suche nach dem ersten numerischen Wert in der Ausgabe
+            import re
+            numbers = re.findall(r"[-+]?\d*\.\d+|\d+", model_output)
+            if numbers:
+                return float(numbers[0])
+            raise ValueError("Keine numerische Vorhersage gefunden")
+
     def _generate_predictions(self, data):
         """Generiert Vorhersagen mit dem KI-Modell"""
         predictions = pd.DataFrame()
@@ -287,11 +301,11 @@ class AnalysisPipeline:
                 features=features
             )
             
-            predictions = predictions.append({
+            predictions = pd.concat([predictions, pd.DataFrame([{
                 'symbol': symbol,
                 'prediction': prediction,
                 'confidence': confidence
-            }, ignore_index=True)
+            }])], ignore_index=True)
         
         return predictions
 
@@ -310,11 +324,11 @@ class AnalysisPipeline:
                 metadata={"signal_type": "trading_signal"}
             )
             
-            signals = signals.append({
+            signals = pd.concat([signals, pd.DataFrame([{
                 'symbol': symbol,
                 'signal': signal,
                 'confidence': symbol_pred['confidence']
-            }, ignore_index=True)
+            }])], ignore_index=True)
         
         return signals
 
