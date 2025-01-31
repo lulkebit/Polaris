@@ -9,16 +9,23 @@ from utils.console_logger import ConsoleLogger
 
 class MeanReversionStrategy(bt.Strategy):
     params = (
-        ('bb_period', 20),
-        ('bb_dev', 2.0),
-        ('rsi_period', 14),
-        ('atr_period', 14),
-        ('risk_manager', None)  # Risikomanager-Instanz
+        ('period', 20),
+        ('devfactor', 2),
+        ('risk_manager', None),
     )
-
+    
     def __init__(self):
         super().__init__()
-        self.risk_manager = self.p.risk_manager or RiskManager()
+        
+        # Indikatoren
+        self.sma = bt.indicators.SimpleMovingAverage(self.data.close, period=self.p.period)
+        self.stddev = bt.indicators.StandardDeviation(self.data.close, period=self.p.period)
+        self.zscore = (self.data.close - self.sma) / self.stddev
+        
+        # Trading-Status
+        self.order = None
+        self.position_size = 0
+        
         self.logger = AILogger(name="mean_reversion_strategy")
         self.console = ConsoleLogger(name="mean_reversion")
         
@@ -28,117 +35,77 @@ class MeanReversionStrategy(bt.Strategy):
         # Technische Indikatoren
         self.bb = BollingerBands(
             close=self.df['close'],
-            window=self.params.bb_period,
-            window_dev=self.params.bb_dev
+            window=self.params.period,
+            window_dev=self.params.devfactor
         )
         self.rsi = RSIIndicator(
             close=self.df['close'],
-            window=self.params.rsi_period
+            window=14
         )
         self.atr = AverageTrueRange(
             high=self.df['high'],
             low=self.df['low'],
             close=self.df['close'],
-            window=self.params.atr_period
+            window=14
         )
         
         # Initiales Logging der Strategie-Parameter
         self.logger.log_model_metrics(
             model_name="mean_reversion",
             metrics={
-                "bb_period": self.p.bb_period,
-                "bb_dev": self.p.bb_dev,
-                "rsi_period": self.p.rsi_period,
-                "atr_period": self.p.atr_period
+                "period": self.p.period,
+                "devfactor": self.p.devfactor
             }
         )
         
         # Konsolen-Ausgabe der Strategie-Initialisierung
         self.console.section("Mean Reversion Strategie")
         self.console.info("Parameter:")
-        self.console.info(f"  - Bollinger Band Periode: {self.p.bb_period}")
-        self.console.info(f"  - Bollinger Band Deviation: {self.p.bb_dev}")
-        self.console.info(f"  - RSI Periode: {self.p.rsi_period}")
-        self.console.info(f"  - ATR Periode: {self.p.atr_period}")
+        self.console.info(f"  - Period: {self.p.period}")
+        self.console.info(f"  - Devfactor: {self.p.devfactor}")
 
     def next(self):
-        # Aktuelle Indikatoren loggen
-        current_indicators = {
-            "bb_upper": self.bb.bollinger_hband()[-1],
-            "bb_lower": self.bb.bollinger_lband()[-1],
-            "bb_middle": self.bb.bollinger_mavg()[-1],
-            "rsi": self.rsi.rsi()[-1],
-            "atr": self.atr.average_true_range()[-1]
-        }
-        
-        self.logger.log_indicators(
-            symbol=self.data._name,
-            indicators=current_indicators
-        )
-        
-        # Konsolen-Ausgabe der aktuellen Indikatoren
-        self.console.info(f"\nAnalyse für {self.data._name}:")
-        self.console.info(f"  Preis: {self.data.close[0]:.2f}")
-        self.console.info(f"  RSI: {current_indicators['rsi']:.2f}")
-        self.console.info(f"  BB Bänder: {current_indicators['bb_lower']:.2f} - {current_indicators['bb_middle']:.2f} - {current_indicators['bb_upper']:.2f}")
-
+        if self.order:
+            return
+            
         if not self.position:
-            if self._buy_signal():
-                sl = self._calculate_stop_loss()
-                tp = self._calculate_take_profit()
-                size = self.risk_manager.calculate_position_size(
-                    self.data.close[0], 
-                    sl
-                )
-                if self.risk_manager.portfolio_risk_check(self._current_exposure()):
-                    self.buy(size=size, exectype=bt.Order.Limit, price=self.data.close[0])
-                    self.sell(size=size, exectype=bt.Order.Stop, price=sl)
-                    self.sell(size=size, exectype=bt.Order.Limit, price=tp)
-                    
-                    # Trade loggen
-                    self.logger.log_trade(
-                        symbol=self.data._name,
-                        action="buy",
-                        price=self.data.close[0],
-                        size=size,
-                        reason="RSI oversold + BB breakout",
-                        risk_metrics={
-                            "stop_loss": sl,
-                            "take_profit": tp,
-                            "risk_per_trade": (self.data.close[0] - sl) * size,
-                            "reward_risk_ratio": (tp - self.data.close[0]) / (self.data.close[0] - sl)
-                        }
-                    )
-                    
-                    # Konsolen-Ausgabe des Trades
-                    self.console.section(f"Neuer Trade: KAUF {self.data._name}")
-                    self.console.success(f"Kauf ausgeführt:")
-                    self.console.info(f"  Preis: {self.data.close[0]:.2f}")
-                    self.console.info(f"  Größe: {size:.4f}")
-                    self.console.info(f"  Stop Loss: {sl:.2f}")
-                    self.console.info(f"  Take Profit: {tp:.2f}")
-                    self.console.info(f"  R/R Ratio: {(tp - self.data.close[0]) / (self.data.close[0] - sl):.2f}")
-        else:
-            if self._sell_signal():
-                self.close()
-                # Trade loggen
-                self.logger.log_trade(
-                    symbol=self.data._name,
-                    action="sell",
-                    price=self.data.close[0],
-                    size=self.position.size,
-                    reason="Signal conditions met",
-                    risk_metrics={
-                        "profit_loss": (self.data.close[0] - self.position.price) * self.position.size
-                    }
-                )
+            if self.zscore < -self.p.devfactor:
+                size = self.get_position_size()
+                self.order = self.buy(size=size)
                 
-                # Konsolen-Ausgabe des Verkaufs
-                profit_loss = (self.data.close[0] - self.position.price) * self.position.size
-                if profit_loss > 0:
-                    self.console.success(f"Position geschlossen mit Gewinn: {profit_loss:.2f}")
-                else:
-                    self.console.failure(f"Position geschlossen mit Verlust: {profit_loss:.2f}")
+        else:
+            if self.zscore > 0:
+                self.order = self.sell(size=self.position.size)
+                
+    def get_position_size(self):
+        if self.p.risk_manager:
+            portfolio_value = self.broker.getvalue()
+            risk_adjusted_size = self.p.risk_manager.calculate_position_size(
+                symbol=self.data._name,
+                price=self.data.close[0],
+                volatility=self.stddev[0]
+            )
+            return min(risk_adjusted_size, portfolio_value * 0.1)  # Max 10% des Portfolios
+        return 1  # Standard-Größe wenn kein Risikomanager verfügbar
+        
+    def notify_order(self, order):
+        if order.status in [order.Submitted, order.Accepted]:
+            return
+            
+        if order.status in [order.Completed]:
+            if order.isbuy():
+                self.log(f'BUY EXECUTED, {order.executed.price:.2f}')
+            elif order.issell():
+                self.log(f'SELL EXECUTED, {order.executed.price:.2f}')
+                
+        elif order.status in [order.Canceled, order.Margin, order.Rejected]:
+            self.log('Order Canceled/Margin/Rejected')
+            
+        self.order = None
+        
+    def log(self, txt, dt=None):
+        dt = dt or self.datas[0].datetime.date(0)
+        print(f'{dt.isoformat()} {txt}')
 
     def _buy_signal(self):
         signal = (
@@ -201,13 +168,13 @@ class MeanReversionStrategy(bt.Strategy):
 
     def _calculate_stop_loss(self):
         volatility = np.std([self.data.close[i] for i in range(-20, 0)])
-        return self.data.close[0] * (1 - self.risk_manager.dynamic_stop_loss(
+        return self.data.close[0] * (1 - self.p.risk_manager.dynamic_stop_loss(
             volatility, 
             self.data.sentiment_score[0]
         ))
 
     def _calculate_take_profit(self):
-        return self.data.close[0] * (1 + 2 * self.risk_manager.dynamic_stop_loss(
+        return self.data.close[0] * (1 + 2 * self.p.risk_manager.dynamic_stop_loss(
             np.std([self.data.close[i] for i in range(-20, 0)]),
             self.data.sentiment_score[0]
         ))

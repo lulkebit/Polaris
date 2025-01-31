@@ -11,6 +11,8 @@ class AILogger:
     und verschiedenen Log-Levels für unterschiedliche Aspekte der KI-Analyse.
     """
     
+    TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
+    
     def __init__(
         self,
         name: str = "trading_ai",
@@ -145,33 +147,17 @@ class AILogger:
             f"Trade: {action.upper()} {symbol} | Price: {price:.2f} | Size: {size:.4f} | Reason: {reason}"
         )
     
-    def log_model_metrics(
-        self,
-        model_name: str,
-        metrics: Dict[str, float],
-        epoch: Optional[int] = None,
-        batch: Optional[int] = None
-    ) -> None:
-        """
-        Protokolliert Modellmetriken während Training oder Evaluation.
-        
-        Args:
-            model_name: Name des Modells
-            metrics: Dict mit Metriken
-            epoch: Aktuelle Epoche (optional)
-            batch: Aktueller Batch (optional)
-        """
+    def log_model_metrics(self, model_name: str, metrics: Dict[str, Any]) -> None:
+        """Protokolliert Modellmetriken mit Zeitstempel."""
+        metrics_str = ' | '.join(f"{k}: {v:.4f}" if isinstance(v, (int, float)) else f"{k}: {v}" for k, v in metrics.items())
         data = {
             'model_name': model_name,
             'metrics': metrics,
-            'epoch': epoch,
-            'batch': batch
+            'timestamp': datetime.now().strftime(self.TIME_FORMAT),
+            'metrics_str': metrics_str
         }
         self._log_json(self.model_metrics_log, data)
-        metrics_str = ' | '.join(f"{k}: {v:.4f}" for k, v in metrics.items())
-        epoch_str = f"Epoch {epoch}" if epoch is not None else ""
-        batch_str = f"Batch {batch}" if batch is not None else ""
-        self.logger.info(f"Model {model_name} {epoch_str} {batch_str} | {metrics_str}")
+        self.logger.info(f"Model {model_name} | {metrics_str}")
     
     def get_predictions_df(self, start_date: Optional[str] = None) -> pd.DataFrame:
         """Lädt Vorhersagen als DataFrame"""

@@ -49,4 +49,16 @@ class DatabaseConnection:
                 raise
 
     def get_session(self):
-        return self.Session() 
+        return self.Session()
+
+    def get_latest_data(self):
+        """Lädt die neuesten Handelsdaten aus der Datenbank"""
+        query = """
+            SELECT * FROM market_data 
+            WHERE date = (SELECT MAX(date) FROM market_data)
+        """
+        try:
+            return self.execute_query(query)
+        except Exception as e:
+            logger.error(f"Fehler beim Laden der neuesten Daten: {str(e)}")
+            raise 

@@ -6,9 +6,11 @@ from storage.database import DatabaseConnection
 from utils.data_processor import calculate_technical_indicators
 from models.strategy import MeanReversionStrategy
 from backtesting import Backtest
+import backtrader as bt
 from models.risk_management import RiskManager
 from utils.ai_logger import AILogger
 from utils.console_logger import ConsoleLogger
+from sqlalchemy import text
 
 class AnalysisPipeline:
     def __init__(self):
@@ -21,10 +23,15 @@ class AnalysisPipeline:
             device_map="auto"
         )
         self.risk_manager = RiskManager()
-        self.strategies = {
-            'mean_reversion': MeanReversionStrategy(risk_manager=self.risk_manager),
-            # Weitere Strategien können hier hinzugefügt werden
-        }
+        
+        # Cerebro-Instanz für Backtrader initialisieren
+        self.cerebro = bt.Cerebro()
+        self.cerebro.broker.setcash(100000.0)
+        self.cerebro.broker.setcommission(commission=0.001)
+        
+        # Strategie zu Cerebro hinzufügen
+        self.cerebro.addstrategy(MeanReversionStrategy, risk_manager=self.risk_manager)
+        
         self.logger = AILogger(name="analysis_pipeline")
         self.console = ConsoleLogger(name="trading_console", log_file="logs/console.log")
 
@@ -158,13 +165,15 @@ class AnalysisPipeline:
             raise
 
     def _check_and_initialize_database(self):
-        """Überprüft und initialisiert die Datenbankverbindung"""
+        """Überprüft die Datenbankverbindung"""
         try:
-            self.db.initialize()
-            self.logger.log_model_metrics(
-                model_name="database",
-                metrics={"status": "initialized"}
-            )
+            # Teste die Verbindung durch Ausführung einer einfachen Query
+            with self.db.engine.connect() as connection:
+                connection.execute(text("SELECT 1"))
+                self.logger.log_model_metrics(
+                    model_name="database",
+                    metrics={"status": "connected"}
+                )
         except Exception as e:
             self.logger.log_model_metrics(
                 model_name="database",
