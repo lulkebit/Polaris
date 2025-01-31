@@ -57,12 +57,13 @@ def schedule_pipeline():
     """
     # Plane stündliche Ausführung
     for hour in range(8, 23):
-        schedule.every().monday.to.friday.at(f"{hour:02d}:00").do(run_pipeline)
-        
+        schedule.every().day.at(f"{hour:02d}:00").do(run_pipeline)
+    
     logger.info("Pipeline-Zeitplan erstellt")
     
     while True:
-        schedule.run_pending()
+        if time.localtime().tm_wday < 5:  # 0-4 entspricht Montag-Freitag
+            schedule.run_pending()
         time.sleep(60)
 
 if __name__ == "__main__":
