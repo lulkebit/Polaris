@@ -10,6 +10,7 @@ import backtrader as bt
 from models.risk_management import RiskManager
 from utils.ai_logger import AILogger
 from utils.console_logger import ConsoleLogger
+from utils.resource_manager import ResourceManager
 from sqlalchemy import text
 
 class AnalysisPipeline:
@@ -23,6 +24,7 @@ class AnalysisPipeline:
             device_map="auto"
         )
         self.risk_manager = RiskManager()
+        self.resource_manager = ResourceManager(max_cpu_percent=85.0, max_memory_percent=85.0)
         
         # Cerebro-Instanz für Backtrader initialisieren
         self.cerebro = bt.Cerebro()
@@ -41,6 +43,9 @@ class AnalysisPipeline:
         self.console.section("Trading AI Analysis Pipeline")
         
         try:
+            # Starte Ressourcenüberwachung
+            self.resource_manager.start_monitoring()
+            
             self.logger.log_model_metrics(
                 model_name="analysis_pipeline",
                 metrics={"status": "started"}
@@ -147,6 +152,9 @@ class AnalysisPipeline:
             self.console.info("Speichere Ergebnisse...")
             self._save_results(signals, backtest_results)
             
+            # Stoppe Ressourcenüberwachung
+            self.resource_manager.stop_monitoring()
+            
             self.logger.log_model_metrics(
                 model_name="analysis_pipeline",
                 metrics={"status": "completed"}
@@ -156,6 +164,9 @@ class AnalysisPipeline:
             self.console.timing(start_time)
             
         except Exception as e:
+            # Stoppe Ressourcenüberwachung auch im Fehlerfall
+            self.resource_manager.stop_monitoring()
+            
             self.logger.log_model_metrics(
                 model_name="analysis_pipeline",
                 metrics={
