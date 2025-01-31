@@ -5,7 +5,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 from storage.database import DatabaseConnection
 from utils.data_processor import calculate_technical_indicators
 from models.strategy import MeanReversionStrategy
-from backtesting import BacktestEngine
+from backtesting import Backtest
 from models.risk_management import RiskManager
 from utils.ai_logger import AILogger
 from utils.console_logger import ConsoleLogger
@@ -13,8 +13,13 @@ from utils.console_logger import ConsoleLogger
 class AnalysisPipeline:
     def __init__(self):
         self.db = DatabaseConnection()
-        self.tokenizer = AutoTokenizer.from_pretrained("deepseek-ai/deepseek-r1")
-        self.model = AutoModelForCausalLM.from_pretrained("deepseek-ai/deepseek-r1")
+        self.tokenizer = AutoTokenizer.from_pretrained("deepseek-ai/deepseek-coder-1.3b-base", trust_remote_code=True)
+        self.model = AutoModelForCausalLM.from_pretrained(
+            "deepseek-ai/deepseek-coder-1.3b-base",
+            trust_remote_code=True,
+            torch_dtype="auto",
+            device_map="auto"
+        )
         self.risk_manager = RiskManager()
         self.strategies = {
             'mean_reversion': MeanReversionStrategy(risk_manager=self.risk_manager),
@@ -247,7 +252,7 @@ class AnalysisPipeline:
         """Führt Backtesting für die Strategien durch"""
         results = {}
         for name, strategy in self.strategies.items():
-            backtest = BacktestEngine(data, strategy)
+            backtest = Backtest(data, strategy)
             result = backtest.run()
             
             self.logger.log_model_metrics(

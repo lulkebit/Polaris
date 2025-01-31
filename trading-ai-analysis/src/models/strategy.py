@@ -1,6 +1,6 @@
 import backtrader as bt
 import numpy as np
-from trading_ai_analysis.models.risk_management import RiskManager
+from .risk_management import RiskManager
 from ta.volatility import BollingerBands
 from ta.momentum import RSIIndicator
 from ta.volatility import AverageTrueRange
