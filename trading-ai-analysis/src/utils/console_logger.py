@@ -144,4 +144,42 @@ class ConsoleLogger:
             start_time: Startzeitpunkt
         """
         elapsed = datetime.now() - start_time
-        self.info(f"Ausführungszeit: {elapsed}") 
+        self.info(f"Ausführungszeit: {elapsed}")
+        
+    def ai_prompt(self, prompt: str, model: str = "Unspezifiziert"):
+        """
+        Loggt einen KI-Prompt mit spezieller Formatierung.
+        
+        Args:
+            prompt: Der an die KI gesendete Prompt
+            model: Das verwendete KI-Modell
+        """
+        self.section(f"KI-Prompt ({model})")
+        formatted_prompt = f"{Fore.BLUE}{prompt}{Style.RESET_ALL}"
+        self.info(formatted_prompt)
+        
+    def ai_response(self, response: str):
+        """
+        Loggt die Antwort der KI mit spezieller Formatierung.
+        
+        Args:
+            response: Die Antwort der KI
+        """
+        self.section("KI-Antwort")
+        formatted_response = f"{Fore.MAGENTA}{response}{Style.RESET_ALL}"
+        self.info(formatted_response)
+        
+    def ai_waiting(self):
+        """
+        Zeigt an, dass auf eine KI-Antwort gewartet wird.
+        """
+        self.info(f"{Fore.YELLOW}Warte auf KI-Antwort...{Style.RESET_ALL}")
+        
+    def ai_thinking(self, partial_response: str):
+        """
+        Zeigt Zwischenergebnisse während der KI-Generierung an.
+        
+        Args:
+            partial_response: Die bisherige Teil-Antwort der KI
+        """
+        self.info(f"{Fore.CYAN}KI denkt: {partial_response}{Style.RESET_ALL}") 

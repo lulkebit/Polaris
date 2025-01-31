@@ -75,21 +75,12 @@ class ResourceManager:
             memory = psutil.virtual_memory()
             memory_percent = memory.percent
             
-            metrics = {
-                'cpu_usage': cpu_percent,
-                'memory_usage': memory_percent,
-                'cpu_limit': self.max_cpu_percent,
-                'memory_limit': self.max_memory_percent
-            }
-            
-            self.logger.log_model_metrics("resource_monitor", metrics)
-            
             if cpu_percent > self.max_cpu_percent:
-                self.console.warning(f"CPU-Auslastung zu hoch: {cpu_percent:.1f}% > {self.max_cpu_percent}%")
+                # self.console.warning(f"CPU-Auslastung zu hoch: {cpu_percent:.1f}% > {self.max_cpu_percent}%")
                 self._throttle_resources()
                 
             if memory_percent > self.max_memory_percent:
-                self.console.warning(f"RAM-Auslastung zu hoch: {memory_percent:.1f}% > {self.max_memory_percent}%")
+                # self.console.warning(f"RAM-Auslastung zu hoch: {memory_percent:.1f}% > {self.max_memory_percent}%")
                 self._throttle_resources()
                 
             time.sleep(5)  # Überprüfung alle 5 Sekunden

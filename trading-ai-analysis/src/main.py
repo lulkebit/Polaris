@@ -103,9 +103,32 @@ class AnalysisPipeline:
                 
                 # Modellvorhersagen
                 features = self._extract_features(symbol_data)
-                inputs = self.tokenizer(str(features), return_tensors="pt", truncation=False).to(self.model.device)
-                outputs = self.model.generate(**inputs, max_new_tokens=20000, pad_token_id=self.tokenizer.eos_token_id)
-                raw_prediction = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
+                prompt = str(features)
+                self.console.ai_prompt(prompt, model="deepseek-coder-1.3b-base")
+                
+                # Zeige Wartezustand an
+                self.console.ai_waiting()
+                
+                inputs = self.tokenizer(prompt, return_tensors="pt", truncation=False).to(self.model.device)
+                
+                # Streaming-Generation mit Zwischenergebnissen
+                outputs = self.model.generate(
+                    **inputs,
+                    max_new_tokens=20000,
+                    pad_token_id=self.tokenizer.eos_token_id,
+                    output_scores=True,
+                    return_dict_in_generate=True
+                )
+                
+                # Schrittweise Decodierung und Logging
+                for i in range(0, len(outputs.sequences[0]), 5):
+                    partial_tokens = outputs.sequences[0][:i+5]
+                    partial_response = self.tokenizer.decode(partial_tokens, skip_special_tokens=True)
+                    self.console.ai_thinking(partial_response)
+                
+                raw_prediction = self.tokenizer.decode(outputs.sequences[0], skip_special_tokens=True)
+                self.console.ai_response(raw_prediction)
+                
                 prediction = self._extract_prediction_value(raw_prediction)
                 confidence = self._calculate_confidence(prediction)
                 
