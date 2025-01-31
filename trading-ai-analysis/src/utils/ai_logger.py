@@ -4,6 +4,9 @@ from datetime import datetime
 from pathlib import Path
 import pandas as pd
 from typing import Dict, Any, Union, Optional
+import torch
+import platform
+import psutil
 
 class AILogger:
     """
@@ -56,6 +59,56 @@ class AILogger:
         self.indicators_log = self.log_dir / f"indicators_{datetime.now().strftime('%Y%m%d')}.jsonl"
         self.trades_log = self.log_dir / f"trades_{datetime.now().strftime('%Y%m%d')}.jsonl"
         self.model_metrics_log = self.log_dir / f"model_metrics_{datetime.now().strftime('%Y%m%d')}.jsonl"
+        
+        # Initial Hardware-Info loggen
+        self.log_hardware_info()
+    
+    def log_hardware_info(self) -> None:
+        """
+        Erkennt und protokolliert verfügbare und genutzte Hardware-Ressourcen (CPU/GPU).
+        """
+        hardware_info = {
+            'platform': platform.platform(),
+            'processor': platform.processor(),
+            'cpu_cores': psutil.cpu_count(logical=False),
+            'cpu_threads': psutil.cpu_count(logical=True),
+            'ram_total_gb': round(psutil.virtual_memory().total / (1024**3), 2),
+            'gpu_available': torch.cuda.is_available(),
+            'gpu_device_count': torch.cuda.device_count() if torch.cuda.is_available() else 0,
+            'current_device': 'cpu'
+        }
+        
+        if hardware_info['gpu_available']:
+            hardware_info['gpu_devices'] = []
+            for i in range(hardware_info['gpu_device_count']):
+                gpu_info = {
+                    'name': torch.cuda.get_device_name(i),
+                    'memory_total_gb': round(torch.cuda.get_device_properties(i).total_memory / (1024**3), 2)
+                }
+                hardware_info['gpu_devices'].append(gpu_info)
+            
+            # Aktuell genutztes Gerät ermitteln
+            hardware_info['current_device'] = 'cuda:0' if torch.cuda.is_available() else 'cpu'
+        
+        self._log_json(self.model_metrics_log, {
+            'model_name': 'system',
+            'metrics': {'hardware_info': hardware_info}
+        })
+        
+        # Logging der Hardware-Informationen
+        self.logger.info("=== Hardware-Konfiguration ===")
+        self.logger.info(f"Platform: {hardware_info['platform']}")
+        self.logger.info(f"CPU: {hardware_info['processor']}")
+        self.logger.info(f"CPU Kerne: {hardware_info['cpu_cores']} (physisch) / {hardware_info['cpu_threads']} (logisch)")
+        self.logger.info(f"RAM: {hardware_info['ram_total_gb']} GB")
+        
+        if hardware_info['gpu_available']:
+            for i, gpu in enumerate(hardware_info['gpu_devices']):
+                self.logger.info(f"GPU {i}: {gpu['name']} ({gpu['memory_total_gb']} GB)")
+            self.logger.info(f"Aktives Gerät: {hardware_info['current_device']}")
+        else:
+            self.logger.info("Keine GPU verfügbar - CPU wird verwendet")
+        self.logger.info("============================")
     
     def _log_json(self, file_path: Path, data: Dict[str, Any]) -> None:
         """Speichert strukturierte Daten im JSONL-Format"""

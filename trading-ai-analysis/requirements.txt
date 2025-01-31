@@ -11,3 +11,4 @@ sqlalchemy>=2.0.0
 colorama==0.4.6  # Für farbige Konsolenausgabe
 python-dotenv==1.0.0  # Für Umgebungsvariablen
 psycopg2-binary==2.9.9  # PostgreSQL Adapter
+psutil==5.9.8  # Für System- und Hardware-Informationen
