@@ -8,6 +8,7 @@ from models.strategy import MeanReversionStrategy
 from backtesting import BacktestEngine
 from models.risk_management import RiskManager
 from utils.ai_logger import AILogger
+from utils.console_logger import ConsoleLogger
 
 class AnalysisPipeline:
     def __init__(self):
@@ -20,19 +21,27 @@ class AnalysisPipeline:
             # Weitere Strategien können hier hinzugefügt werden
         }
         self.logger = AILogger(name="analysis_pipeline")
+        self.console = ConsoleLogger(name="trading_console", log_file="logs/console.log")
 
     def run_analysis(self):
         """Hauptworkflow für Datenanalyse und Strategieausführung"""
+        start_time = datetime.now()
+        self.console.section("Trading AI Analysis Pipeline")
+        
         try:
             self.logger.log_model_metrics(
                 model_name="analysis_pipeline",
                 metrics={"status": "started"}
             )
+            self.console.info("Pipeline gestartet")
             
             # 0. Datenbank-Initialisierung prüfen
+            self.console.info("Initialisiere Datenbankverbindung...")
             self._check_and_initialize_database()
+            self.console.success("Datenbankverbindung hergestellt")
             
             # 1. Daten aus der Pipeline laden
+            self.console.info("Lade Daten aus der Pipeline...")
             raw_data = self._load_pipeline_data()
             self.logger.log_model_metrics(
                 model_name="data_loading",
@@ -41,8 +50,10 @@ class AnalysisPipeline:
                     "symbols": len(raw_data['symbol'].unique())
                 }
             )
+            self.console.success(f"Daten geladen: {len(raw_data)} Zeilen für {len(raw_data['symbol'].unique())} Symbole")
             
             # 2. Datenaufbereitung und Feature-Engineering
+            self.console.info("Führe Feature-Engineering durch...")
             processed_data = self._preprocess_data(raw_data)
             self.logger.log_model_metrics(
                 model_name="preprocessing",
@@ -51,53 +62,84 @@ class AnalysisPipeline:
                     "features_generated": len(processed_data.columns)
                 }
             )
+            self.console.success(f"Features generiert: {len(processed_data.columns)} Features")
             
             # 3. Risiko-Check vor der Analyse
+            self.console.info("Führe Risiko-Checks durch...")
             if not self._pre_risk_checks(processed_data):
                 self.logger.log_model_metrics(
                     model_name="risk_check",
                     metrics={"status": "failed"}
                 )
+                self.console.failure("Risiko-Checks fehlgeschlagen - Analyse abgebrochen")
                 return
+            self.console.success("Risiko-Checks bestanden")
                 
             # 4. KI-basierte Analyse
-            predictions = self._generate_predictions(processed_data)
-            self.logger.log_model_metrics(
-                model_name="predictions",
-                metrics={
-                    "predictions_generated": len(predictions),
-                    "mean_confidence": predictions['confidence'].mean()
-                }
-            )
+            self.console.section("KI-Analyse")
+            total_symbols = len(processed_data['symbol'].unique())
+            predictions = pd.DataFrame()
+            
+            for idx, symbol in enumerate(processed_data['symbol'].unique(), 1):
+                symbol_data = processed_data[processed_data['symbol'] == symbol]
+                self.console.progress(idx, total_symbols, f"Analysiere {symbol}")
+                
+                # Modellvorhersagen
+                features = self._extract_features(symbol_data)
+                prediction = self.model.predict(features)
+                confidence = self._calculate_confidence(prediction)
+                
+                self.logger.log_prediction(
+                    symbol=symbol,
+                    prediction=prediction,
+                    confidence=confidence,
+                    features=features
+                )
+                
+                predictions = predictions.append({
+                    'symbol': symbol,
+                    'prediction': prediction,
+                    'confidence': confidence
+                }, ignore_index=True)
+            
+            self.console.success(f"KI-Analyse abgeschlossen für {total_symbols} Symbole")
             
             # 5. Signalgenerierung
+            self.console.section("Signal-Generierung")
             signals = self._generate_signals(processed_data, predictions)
+            buy_signals = len(signals[signals['signal'] > 0])
+            sell_signals = len(signals[signals['signal'] < 0])
+            
             self.logger.log_model_metrics(
                 model_name="signals",
                 metrics={
-                    "buy_signals": len(signals[signals['signal'] > 0]),
-                    "sell_signals": len(signals[signals['signal'] < 0])
+                    "buy_signals": buy_signals,
+                    "sell_signals": sell_signals
                 }
             )
+            self.console.info(f"Generierte Signale: {buy_signals} Kauf, {sell_signals} Verkauf")
             
             # 6. Backtesting und Optimierung
+            self.console.section("Backtesting")
             backtest_results = self._run_backtesting(processed_data)
-            self.logger.log_model_metrics(
-                model_name="backtesting",
-                metrics={
-                    "sharpe_ratio": backtest_results['sharpe_ratio'],
-                    "max_drawdown": backtest_results['max_drawdown'],
-                    "total_return": backtest_results['total_return']
-                }
-            )
+            
+            for strategy_name, result in backtest_results.items():
+                self.console.info(f"\nErgebnisse für {strategy_name}:")
+                self.console.info(f"Sharpe Ratio: {result['sharpe_ratio']:.2f}")
+                self.console.info(f"Max Drawdown: {result['max_drawdown']:.2%}")
+                self.console.info(f"Gesamtrendite: {result['total_return']:.2%}")
             
             # 7. Ergebnisse speichern
+            self.console.info("Speichere Ergebnisse...")
             self._save_results(signals, backtest_results)
             
             self.logger.log_model_metrics(
                 model_name="analysis_pipeline",
                 metrics={"status": "completed"}
             )
+            
+            self.console.section("Analyse abgeschlossen")
+            self.console.timing(start_time)
             
         except Exception as e:
             self.logger.log_model_metrics(
@@ -107,6 +149,7 @@ class AnalysisPipeline:
                     "error_message": str(e)
                 }
             )
+            self.console.failure(f"Fehler in der Pipeline: {str(e)}")
             raise
 
     def _check_and_initialize_database(self):

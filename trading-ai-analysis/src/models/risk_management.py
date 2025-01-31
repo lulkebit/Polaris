@@ -2,6 +2,7 @@ import numpy as np
 from typing import Dict
 from storage.database import DatabaseConnection
 from utils.ai_logger import AILogger
+from utils.console_logger import ConsoleLogger
 
 class RiskManager:
     def __init__(self, initial_capital: float = 100000.0):
@@ -9,6 +10,7 @@ class RiskManager:
         self.initial_capital = initial_capital
         self.risk_parameters = self._load_risk_parameters()
         self.logger = AILogger(name="risk_manager")
+        self.console = ConsoleLogger(name="risk_manager")
         
         # Log initial risk parameters
         self.logger.log_model_metrics(
@@ -18,6 +20,18 @@ class RiskManager:
                 **self.risk_parameters
             }
         )
+        
+        # Konsolen-Ausgabe der Initialisierung
+        self.console.section("Risikomanager Initialisierung")
+        self.console.info(f"Initiales Kapital: {self.initial_capital:,.2f} EUR")
+        self.console.info("Risikoparameter:")
+        for key, value in self.risk_parameters.items():
+            if key != 'sector_limits':
+                self.console.info(f"  - {key}: {value}")
+            else:
+                self.console.info("  - Sektor-Limits:")
+                for sector, limit in value.items():
+                    self.console.info(f"    * {sector}: {limit:.1%}")
         
     def _load_risk_parameters(self) -> Dict:
         """Lädt Risikoparameter aus der Datenbank"""
@@ -53,6 +67,14 @@ class RiskManager:
             }
         )
         
+        # Konsolen-Ausgabe der Positionsgrößenberechnung
+        self.console.info("\nPositionsgrößenberechnung:")
+        self.console.info(f"  Entry Preis: {entry_price:.2f}")
+        self.console.info(f"  Stop Loss: {stop_loss:.2f}")
+        self.console.info(f"  Risiko pro Aktie: {risk_per_share:.2f}")
+        self.console.info(f"  Maximales Risiko: {max_risk_amount:.2f}")
+        self.console.info(f"  Berechnete Positionsgröße: {position_size:.2f}")
+        
         return position_size
 
     def dynamic_stop_loss(self, volatility: float, sentiment: float) -> float:
@@ -73,6 +95,15 @@ class RiskManager:
                 "final_stop_loss": stop_loss
             }
         )
+        
+        # Konsolen-Ausgabe der Stop-Loss-Berechnung
+        self.console.info("\nDynamische Stop-Loss Berechnung:")
+        self.console.info(f"  Basis Stop-Loss: {base_sl:.1%}")
+        self.console.info(f"  Volatilität: {volatility:.4f}")
+        self.console.info(f"  Volatilitätsfaktor: {volatility_factor:.2f}")
+        self.console.info(f"  Sentiment: {sentiment:.2f}")
+        self.console.info(f"  Sentiment-Anpassung: {sentiment_adjustment:.2f}")
+        self.console.info(f"  Finaler Stop-Loss: {stop_loss:.1%}")
         
         return stop_loss
 
@@ -97,6 +128,22 @@ class RiskManager:
                 **{"sector_exposure_" + k: v for k, v in sector_exposure.items()}
             }
         )
+        
+        # Konsolen-Ausgabe der Risikochecks
+        self.console.section("Portfolio Risiko Check")
+        self.console.info(f"Gesamtexposure: {total_exposure:,.2f} EUR")
+        self.console.info(f"Maximale erlaubte Exposure: {self.initial_capital * self.risk_parameters['max_leverage']:,.2f} EUR")
+        self.console.info("\nSektor-Expositionen:")
+        for sector, exposure in sector_exposure.items():
+            limit = self.risk_parameters['sector_limits'][sector]
+            status = "✓" if exposure <= limit else "✗"
+            color = Fore.GREEN if exposure <= limit else Fore.RED
+            self.console.info(f"  {status} {sector}: {exposure:.1%} (Limit: {limit:.1%})")
+        
+        if risk_ok:
+            self.console.success("Risiko-Check bestanden")
+        else:
+            self.console.failure("Risiko-Check fehlgeschlagen")
         
         return risk_ok
 
