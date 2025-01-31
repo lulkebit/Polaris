@@ -4,8 +4,34 @@ from ta.trend import SMAIndicator, MACD
 from ta.momentum import RSIIndicator
 from ta.volatility import BollingerBands
 
-def calculate_technical_indicators(df):
-    """Berechnet technische Indikatoren"""
+def reduce_dataframe(df: pd.DataFrame, reduction_factor: float) -> pd.DataFrame:
+    """
+    Reduziert die Größe des DataFrames durch Auswahl jeder n-ten Zeile.
+    
+    Args:
+        df: DataFrame das reduziert werden soll
+        reduction_factor: Faktor um den reduziert werden soll (0.1 = 10% der Daten behalten)
+        
+    Returns:
+        pd.DataFrame: Reduziertes DataFrame
+    """
+    if reduction_factor >= 1.0:
+        return df
+        
+    step = int(1 / reduction_factor)
+    return df.iloc[::step].copy()
+
+def calculate_technical_indicators(df, reduction_factor: float = 1.0):
+    """
+    Berechnet technische Indikatoren mit optionaler Datenreduktion.
+    
+    Args:
+        df: DataFrame mit den Rohdaten
+        reduction_factor: Faktor für die Datenreduktion (default: 1.0 = keine Reduktion)
+    """
+    # Daten reduzieren wenn nötig
+    df = reduce_dataframe(df, reduction_factor)
+    
     # Moving Averages
     ma20 = SMAIndicator(close=df['close'], window=20)
     ma50 = SMAIndicator(close=df['close'], window=50)

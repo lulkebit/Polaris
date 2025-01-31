@@ -204,7 +204,30 @@ class AnalysisPipeline:
 
     def _preprocess_data(self, data):
         """Bereitet die Daten auf und führt Feature-Engineering durch"""
-        return calculate_technical_indicators(data)
+        reduction_factor = self.resource_manager.get_data_reduction_factor()
+        if reduction_factor < 1.0:
+            self.console.info(f"Low-Performance-Modus aktiv - Reduziere Datenmenge auf {reduction_factor*100:.0f}%")
+            self.logger.log_model_metrics(
+                model_name="data_processing",
+                metrics={
+                    "low_performance_mode": True,
+                    "data_reduction_factor": reduction_factor,
+                    "original_rows": len(data)
+                }
+            )
+        
+        processed_data = calculate_technical_indicators(data, reduction_factor)
+        
+        if reduction_factor < 1.0:
+            self.logger.log_model_metrics(
+                model_name="data_processing",
+                metrics={
+                    "reduced_rows": len(processed_data),
+                    "reduction_percentage": (len(processed_data) / len(data)) * 100
+                }
+            )
+            
+        return processed_data
 
     def _pre_risk_checks(self, data):
         """Führt Risikochecks vor der Analyse durch (deaktiviert)"""

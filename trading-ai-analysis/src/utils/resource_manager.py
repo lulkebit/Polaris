@@ -21,6 +21,34 @@ class ResourceManager:
         self.console = ConsoleLogger(name="resource_manager")
         self._monitoring_thread: Optional[Thread] = None
         self._should_monitor = False
+        self._low_performance_mode = not torch.cuda.is_available()
+        
+        if self._low_performance_mode:
+            self.console.warning("GPU nicht verfügbar - Low-Performance-Modus aktiviert")
+            self.logger.log_model_metrics(
+                "resource_manager",
+                {"mode": "low_performance", "reason": "no_gpu"}
+            )
+        
+    def is_low_performance_mode(self) -> bool:
+        """
+        Gibt zurück, ob der Low-Performance-Modus aktiv ist.
+        
+        Returns:
+            bool: True wenn im Low-Performance-Modus, sonst False
+        """
+        return self._low_performance_mode
+        
+    def get_data_reduction_factor(self) -> float:
+        """
+        Gibt den Faktor zurück, um den die Datenmenge reduziert werden soll.
+        
+        Returns:
+            float: Reduktionsfaktor (1.0 = keine Reduktion, 0.1 = auf 10% reduzieren)
+        """
+        if self._low_performance_mode:
+            return 0.1  # Reduziere auf 10% im Low-Performance-Modus
+        return 1.0
         
     def start_monitoring(self):
         """Startet die Ressourcenüberwachung in einem separaten Thread."""
