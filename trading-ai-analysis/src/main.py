@@ -211,12 +211,20 @@ class AnalysisPipeline:
     def _extract_features(self, data):
         """Extrahiert Features für das KI-Modell"""
         features = {
-            'close': data['close'].values,
-            'volume': data['volume'].values,
-            'high': data['high'].values,
-            'low': data['low'].values,
-            'technical_features': data.filter(like='technical_').values
+            'price_stats': {
+                'close_mean': float(data['close'].mean()),
+                'close_std': float(data['close'].std()),
+                'volume_mean': float(data['volume'].mean()),
+                'high_max': float(data['high'].max()),
+                'low_min': float(data['low'].min())
+            }
         }
+        
+        # Technische Features hinzufügen, falls vorhanden
+        tech_cols = data.filter(like='technical_').columns
+        if len(tech_cols) > 0:
+            features['technical_stats'] = data[tech_cols].agg(['mean', 'std']).to_dict()
+            
         return features
 
     def _calculate_confidence(self, prediction):
