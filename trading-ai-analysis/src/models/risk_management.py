@@ -160,4 +160,25 @@ class RiskManager:
             metrics=exposures
         )
         
-        return exposures 
+        return exposures
+
+    def calculate_market_exposure(self) -> float:
+        """Berechnet die aktuelle Marktexposition"""
+        query = """
+            SELECT SUM(close * volume) / (SELECT COUNT(DISTINCT symbol) FROM market_data_combined) as exposure
+            FROM market_data_combined
+            WHERE timestamp = (SELECT MAX(timestamp) FROM market_data_combined)
+        """
+        try:
+            result = self.db.execute_query(query)
+            exposure = float(result[0][0] or 0) / self.initial_capital  # Normalisiert auf Initialkapital
+            
+            self.logger.log_model_metrics(
+                model_name="market_exposure",
+                metrics={"total_exposure": exposure}
+            )
+            
+            return exposure
+        except Exception as e:
+            self.logger.error(f"Fehler bei der Berechnung der Marktexposition: {str(e)}")
+            return 0.0 

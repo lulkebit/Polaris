@@ -195,6 +195,10 @@ class AnalysisPipeline:
 
     def _pre_risk_checks(self, data):
         """Führt Risikochecks vor der Analyse durch"""
+        if len(data) == 0:
+            self.console.warning("Keine Daten für Risikoanalyse verfügbar")
+            return False
+            
         volatility = data['close'].pct_change().std()
         market_exposure = self.risk_manager.calculate_market_exposure()
         
