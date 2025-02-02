@@ -12,6 +12,8 @@ from utils.ai_logger import AILogger
 from utils.console_logger import ConsoleLogger
 from utils.resource_manager import ResourceManager
 from sqlalchemy import text
+import traceback
+import torch
 
 class AnalysisPipeline:
     def __init__(self):
@@ -26,6 +28,9 @@ class AnalysisPipeline:
         self.risk_manager = RiskManager()
         self.resource_manager = ResourceManager(max_cpu_percent=85.0, max_memory_percent=85.0)
         
+        # Low-Performance-Modus basierend auf GPU-Verfügbarkeit
+        self.low_performance_mode = not torch.cuda.is_available()
+        
         # Cerebro-Instanz für Backtrader initialisieren
         self.cerebro = bt.Cerebro()
         self.cerebro.broker.setcash(100000.0)
@@ -39,10 +44,13 @@ class AnalysisPipeline:
 
     def run_analysis(self):
         """Hauptworkflow für Datenanalyse und Strategieausführung"""
-        start_time = datetime.now()
-        self.console.section("Trading AI Analysis Pipeline")
-        
         try:
+            self.logger.log_model_metrics(
+                model_name="analysis_pipeline",
+                metrics={"status": "starting", "message": "=== Trading AI Analysis Pipeline ==="}
+            )
+            self.console.section("Trading AI Analysis Pipeline")
+            
             # Starte Ressourcenüberwachung
             self.resource_manager.start_monitoring()
             
@@ -52,58 +60,84 @@ class AnalysisPipeline:
             )
             self.console.info("Pipeline gestartet")
             
-            # 0. Datenbank-Initialisierung prüfen
+            # 1. Datenbank-Verbindung
             self.console.info("Initialisiere Datenbankverbindung...")
-            self._check_and_initialize_database()
+            self.db = DatabaseConnection()
+            self.logger.log_model_metrics(
+                model_name="database",
+                metrics={"status": "connected"}
+            )
             self.console.success("Datenbankverbindung hergestellt")
             
-            # 1. Daten aus der Pipeline laden
+            # 2. Daten laden
             self.console.info("Lade Daten aus der Pipeline...")
-            raw_data = self._load_pipeline_data()
+            data = self.db.get_latest_data()
+            total_symbols = len(data['symbol'].unique())
             self.logger.log_model_metrics(
-                model_name="data_loading",
-                metrics={
-                    "rows_loaded": len(raw_data),
-                    "symbols": len(raw_data['symbol'].unique())
-                }
+                model_name="data_processing",
+                metrics={"rows_loaded": len(data), "symbols": total_symbols}
             )
-            self.console.success(f"Daten geladen: {len(raw_data)} Zeilen für {len(raw_data['symbol'].unique())} Symbole")
+            self.console.success(f"Daten geladen: {len(data)} Zeilen für {total_symbols} Symbole")
             
-            # 2. Datenaufbereitung und Feature-Engineering
+            # 3. Feature Engineering
             self.console.info("Führe Feature-Engineering durch...")
-            processed_data = self._preprocess_data(raw_data)
-            self.logger.log_model_metrics(
-                model_name="preprocessing",
-                metrics={
-                    "processed_rows": len(processed_data),
-                    "features_generated": len(processed_data.columns)
-                }
-            )
-            self.console.success(f"Features generiert: {len(processed_data.columns)} Features")
-            
-            # 3. Risiko-Check vor der Analyse
-            self.console.info("Führe Risiko-Checks durch...")
-            if not self._pre_risk_checks(processed_data):
+            if self.low_performance_mode:
                 self.logger.log_model_metrics(
-                    model_name="risk_check",
-                    metrics={"status": "failed"}
+                    model_name="data_processing",
+                    metrics={"low_performance_mode": True, "original_rows": len(data)}
                 )
-                self.console.failure("Risiko-Checks fehlgeschlagen - Analyse abgebrochen")
+                original_size = len(data)
+                data = data.sample(frac=0.1)  # Reduziere auf 10%
+                self.logger.log_model_metrics(
+                    model_name="data_processing",
+                    metrics={"reduced_rows": len(data), "reduction_percentage": (len(data) / original_size) * 100}
+                )
+            
+            # 4. Risiko-Checks
+            self.console.info("Führe Risiko-Checks durch...")
+            if not self._pre_risk_checks(data):
+                self.logger.log_model_metrics(
+                    model_name="risk_metrics",
+                    metrics={"risk_checks_disabled": True, "status": "failed"}
+                )
+                self.console.failure("Risiko-Checks fehlgeschlagen")
                 return
+            self.logger.log_model_metrics(
+                model_name="risk_metrics",
+                metrics={"risk_checks_disabled": False, "status": "passed"}
+            )
             self.console.success("Risiko-Checks bestanden")
                 
-            # 4. KI-basierte Analyse
+            # 5. KI-Analyse
             self.console.section("KI-Analyse")
-            total_symbols = len(processed_data['symbol'].unique())
             predictions = pd.DataFrame()
             
-            for idx, symbol in enumerate(processed_data['symbol'].unique(), 1):
-                symbol_data = processed_data[processed_data['symbol'] == symbol]
-                self.console.progress(idx, total_symbols, f"Analysiere {symbol}")
+            for i, symbol in enumerate(data['symbol'].unique(), 1):
+                progress_pct = (i/total_symbols*100)
+                self.console.info(f"[{progress_pct:.1f}%] Analysiere {symbol}")
+                self.logger.log_model_metrics(
+                    model_name="analysis_pipeline",
+                    metrics={"symbol": symbol, "progress": f"{i}/{total_symbols}"}
+                )
                 
-                # Modellvorhersagen
+                symbol_data = data[data['symbol'] == symbol].copy()
+                
+                # Feature-Extraktion
+                self.logger.log_model_metrics(
+                    model_name="analysis_pipeline",
+                    metrics={"symbol": symbol, "action": "extracting_features"}
+                )
                 features = self._extract_features(symbol_data)
-                # Detaillierter Prompt für die KI-Analyse
+                self.logger.log_model_metrics(
+                    model_name="analysis_pipeline",
+                    metrics={"symbol": symbol, "features": features}
+                )
+
+                # KI-Prompt vorbereiten
+                self.logger.log_model_metrics(
+                    model_name="analysis_pipeline",
+                    metrics={"symbol": symbol, "action": "preparing_prompt"}
+                )
                 prompt = f"""Analysiere die folgenden Handelsdaten für eine KI-basierte Trading-Entscheidung:
 
 Input-Features: {str(features)}
@@ -181,42 +215,100 @@ Wichtig:
 - Gib das Dictionary exakt in diesem Format zurück
 - Keine zusätzlichen Erklärungen oder Kommentare
 - Verwende die vorhandenen Features für die Analyse"""
-
                 self.console.ai_prompt(prompt, model="deepseek-coder-1.3b-base")
-                
-                # Zeige Wartezustand an
-                self.console.ai_waiting()
-                
-                inputs = self.tokenizer(prompt, return_tensors="pt", truncation=False).to(self.model.device)
-                
-                # Streaming-Generation mit Zwischenergebnissen
-                outputs = self.model.generate(
-                    **inputs,
-                    max_new_tokens=20000,
-                    pad_token_id=self.tokenizer.eos_token_id,
-                    output_scores=True,
-                    return_dict_in_generate=True
+                self.logger.log_model_metrics(
+                    model_name="analysis_pipeline",
+                    metrics={"symbol": symbol, "prompt_length": len(prompt)}
                 )
                 
-                # Schrittweise Decodierung und Logging
+                # Tokenisierung
+                self.logger.log_model_metrics(
+                    model_name="analysis_pipeline",
+                    metrics={"symbol": symbol, "action": "tokenizing_input"}
+                )
+                inputs = self.tokenizer(prompt, return_tensors="pt", truncation=False).to(self.model.device)
+                self.logger.log_model_metrics(
+                    model_name="analysis_pipeline",
+                    metrics={"symbol": symbol, "input_length": len(inputs['input_ids'][0])}
+                )
+                
+                # Modellvorhersage
+                self.console.ai_waiting()
+                self.logger.log_model_metrics(
+                    model_name="analysis_pipeline",
+                    metrics={"symbol": symbol, "action": "starting_model_inference"}
+                )
+                
+                try:
+                    outputs = self.model.generate(
+                        **inputs,
+                        max_new_tokens=20000,
+                        pad_token_id=self.tokenizer.eos_token_id,
+                        output_scores=True,
+                        return_dict_in_generate=True
+                    )
+                    self.logger.log_model_metrics(
+                        model_name="analysis_pipeline",
+                        metrics={"symbol": symbol, "output_length": len(outputs.sequences[0])}
+                    )
+                except Exception as e:
+                    self.logger.log_model_metrics(
+                        model_name="analysis_pipeline",
+                        metrics={"symbol": symbol, "action": "model_inference_error", "error": str(e)}
+                    )
+                    continue
+
+                # Decodierung und Logging
+                self.logger.log_model_metrics(
+                    model_name="analysis_pipeline",
+                    metrics={"symbol": symbol, "action": "decoding_output"}
+                )
                 for i in range(0, len(outputs.sequences[0]), 5):
                     partial_tokens = outputs.sequences[0][:i+5]
                     partial_response = self.tokenizer.decode(partial_tokens, skip_special_tokens=True)
                     self.console.ai_thinking(partial_response)
-                
+                    self.logger.log_model_metrics(
+                        model_name="analysis_pipeline",
+                        metrics={"symbol": symbol, "progress": f"{i}/{len(outputs.sequences[0])}"}
+                    )
+
                 raw_prediction = self.tokenizer.decode(outputs.sequences[0], skip_special_tokens=True)
                 self.console.ai_response(raw_prediction)
-                
+                self.logger.log_model_metrics(
+                    model_name="analysis_pipeline",
+                    metrics={"symbol": symbol, "prediction_length": len(raw_prediction)}
+                )
+
+                # Analyse-Extraktion
+                self.logger.log_model_metrics(
+                    model_name="analysis_pipeline",
+                    metrics={"symbol": symbol, "action": "extracting_analysis_result"}
+                )
                 analysis_result = self._extract_prediction_value(raw_prediction)
+                self.logger.log_model_metrics(
+                    model_name="analysis_pipeline",
+                    metrics={"symbol": symbol, "analysis": analysis_result}
+                )
+
+                # Trading-Signal generieren
+                self.logger.log_model_metrics(
+                    model_name="analysis_pipeline",
+                    metrics={"symbol": symbol, "action": "generating_trading_signal"}
+                )
                 trading_signal = self._generate_trading_signal(analysis_result)
-                
+                self.logger.log_model_metrics(
+                    model_name="analysis_pipeline",
+                    metrics={"symbol": symbol, "signal": trading_signal}
+                )
+
+                # Logging und Speicherung
                 self.logger.log_prediction(
                     symbol=symbol,
                     prediction=trading_signal['signal'],
                     confidence=trading_signal['confidence'],
                     features=analysis_result
                 )
-                
+
                 predictions = pd.concat([predictions, pd.DataFrame([{
                     'symbol': symbol,
                     'prediction': trading_signal['signal'],
@@ -226,37 +318,41 @@ Wichtig:
                     'stop_loss': trading_signal['stop_loss'],
                     'take_profit': trading_signal['take_profit']
                 }])], ignore_index=True)
-            
+                
+                self.logger.log_model_metrics(
+                    model_name="analysis_pipeline",
+                    metrics={"symbol": symbol, "status": "completed"}
+                )
+
             self.console.success(f"KI-Analyse abgeschlossen für {total_symbols} Symbole")
-            
-            # 5. Signalgenerierung
-            self.console.section("Signal-Generierung")
-            signals = self._generate_signals(processed_data, predictions)
-            buy_signals = len(signals[signals['signal'] > 0])
-            sell_signals = len(signals[signals['signal'] < 0])
-            
             self.logger.log_model_metrics(
-                model_name="signals",
-                metrics={
-                    "buy_signals": buy_signals,
-                    "sell_signals": sell_signals
-                }
+                model_name="analysis_pipeline",
+                metrics={"total_symbols": total_symbols}
             )
-            self.console.info(f"Generierte Signale: {buy_signals} Kauf, {sell_signals} Verkauf")
             
-            # 6. Backtesting und Optimierung
+            # 6. Signalgenerierung
+            self.console.section("Signal-Generierung")
+            signals = self._generate_signals(data, predictions)
+            self.logger.log_model_metrics(
+                model_name="analysis_pipeline",
+                metrics={"signal_count": len(signals)}
+            )
+            
+            # 7. Backtesting
             self.console.section("Backtesting")
-            backtest_results = self._run_backtesting(processed_data)
+            backtest_results = self._run_backtesting(data)
+            self.logger.log_model_metrics(
+                model_name="analysis_pipeline",
+                metrics={"strategy_count": len(backtest_results)}
+            )
             
-            for strategy_name, result in backtest_results.items():
-                self.console.info(f"\nErgebnisse für {strategy_name}:")
-                self.console.info(f"Sharpe Ratio: {result['sharpe_ratio']:.2f}")
-                self.console.info(f"Max Drawdown: {result['max_drawdown']:.2%}")
-                self.console.info(f"Gesamtrendite: {result['total_return']:.2%}")
-            
-            # 7. Ergebnisse speichern
-            self.console.info("Speichere Ergebnisse...")
+            # 8. Ergebnisse speichern
+            self.console.section("Speichere Ergebnisse")
             self._save_results(signals, backtest_results)
+            self.logger.log_model_metrics(
+                model_name="analysis_pipeline",
+                metrics={"results_saving": {"signals_saved": len(signals), "backtest_results_saved": len(backtest_results)}}
+            )
             
             # Stoppe Ressourcenüberwachung
             self.resource_manager.stop_monitoring()
@@ -269,6 +365,8 @@ Wichtig:
             self.console.section("Analyse abgeschlossen")
             self.console.timing(start_time)
             
+            return signals, backtest_results
+
         except Exception as e:
             # Stoppe Ressourcenüberwachung auch im Fehlerfall
             self.resource_manager.stop_monitoring()
@@ -381,6 +479,17 @@ Wichtig:
                 urls = news_data['news_urls'].iloc[0].split(' ||| ') if news_data['news_urls'].iloc[0] else []
                 sentiments = [float(s) for s in news_data['news_sentiments'].iloc[0].split(' ||| ')] if news_data['news_sentiments'].iloc[0] else []
                 
+                # Im Low-Performance-Modus: Reduziere die Anzahl der News auf maximal 3
+                if hasattr(self, 'low_performance_mode') and self.low_performance_mode:
+                    self.logger.log_model_metrics(
+                        model_name="data_processing",
+                        metrics={"original_news": len(titles), "reduced_news": min(3, len(titles))}
+                    )
+                    titles = titles[:3]
+                    descriptions = descriptions[:3] if descriptions else []
+                    urls = urls[:3] if urls else []
+                    sentiments = sentiments[:3] if sentiments else []
+                
                 # Kombiniere die Daten
                 latest_news = {
                     'articles': [
@@ -432,7 +541,10 @@ Wichtig:
                 return analysis
             raise ValueError("Keine gültige Analyse-Struktur gefunden")
         except Exception as e:
-            self.logger.warning(f"Fehler bei der Analyse-Extraktion: {str(e)}")
+            self.logger.log_model_metrics(
+                model_name="analysis_pipeline",
+                metrics={"action": "extracting_default_analysis", "error": str(e)}
+            )
             # Gebe Standard-Analyse-Struktur zurück
             return {
                 'metadata': {
@@ -491,7 +603,10 @@ Wichtig:
             }
             
         except Exception as e:
-            self.logger.warning(f"Fehler bei der Signalgenerierung: {str(e)}")
+            self.logger.log_model_metrics(
+                model_name="analysis_pipeline",
+                metrics={"action": "generating_default_signal", "error": str(e)}
+            )
             return {
                 'symbol': 'UNKNOWN',
                 'signal': 0,
