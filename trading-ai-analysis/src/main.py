@@ -103,7 +103,85 @@ class AnalysisPipeline:
                 
                 # Modellvorhersagen
                 features = self._extract_features(symbol_data)
-                prompt = str(features)
+                # Detaillierter Prompt für die KI-Analyse
+                prompt = f"""Analysiere die folgenden Handelsdaten für eine KI-basierte Trading-Entscheidung:
+
+Input-Features: {str(features)}
+
+Führe eine detaillierte Analyse durch und gib das Ergebnis in exakt diesem Format zurück:
+
+{{
+    'metadata': {{
+        'symbol': str,
+        'analysis_timestamp': str,
+        'data_points': int
+    }},
+    'price_analysis': {{
+        'price_metrics': {{
+            'price_strength': float,
+            'volatility_level': float,
+            'volume_strength': float,
+            'support_level': float,
+            'resistance_level': float
+        }},
+        'trend_metrics': {{
+            'trend_direction': float,
+            'trend_strength': float,
+            'price_momentum': float
+        }}
+    }},
+    'news_analysis': {{
+        'overall_sentiment': {{
+            'sentiment_score': float,
+            'sentiment_confidence': float,
+            'sentiment_trend': float
+        }},
+        'news_relevance': {{
+            'volume_score': float,
+            'freshness_score': float,
+            'impact_score': float
+        }},
+        'key_events': {{
+            'has_earnings': bool,
+            'has_guidance': bool,
+            'has_merger': bool,
+            'has_regulatory': bool,
+            'has_market_move': bool
+        }}
+    }},
+    'technical_analysis': {{
+        'indicators': {{
+            'rsi_signal': float,
+            'macd_signal': float,
+            'bb_signal': float,
+            'ma_signal': float
+        }},
+        'patterns': {{
+            'trend_strength': float,
+            'reversal_probability': float,
+            'breakout_potential': float
+        }}
+    }},
+    'combined_analysis': {{
+        'overall_score': float,
+        'confidence_score': float,
+        'risk_level': float,
+        'position_advice': {{
+            'action': str,
+            'size': float,
+            'stop_loss': float,
+            'take_profit': float
+        }}
+    }}
+}}
+
+Wichtig: 
+- Alle numerischen Werte müssen im angegebenen Wertebereich liegen
+- Übernimm die Metadaten exakt aus den Input-Features
+- Gib das Dictionary exakt in diesem Format zurück
+- Keine zusätzlichen Erklärungen oder Kommentare
+- Verwende die vorhandenen Features für die Analyse"""
+
                 self.console.ai_prompt(prompt, model="deepseek-coder-1.3b-base")
                 
                 # Zeige Wartezustand an
@@ -129,20 +207,24 @@ class AnalysisPipeline:
                 raw_prediction = self.tokenizer.decode(outputs.sequences[0], skip_special_tokens=True)
                 self.console.ai_response(raw_prediction)
                 
-                prediction = self._extract_prediction_value(raw_prediction)
-                confidence = self._calculate_confidence(prediction)
+                analysis_result = self._extract_prediction_value(raw_prediction)
+                trading_signal = self._generate_trading_signal(analysis_result)
                 
                 self.logger.log_prediction(
                     symbol=symbol,
-                    prediction=prediction,
-                    confidence=confidence,
-                    features=features
+                    prediction=trading_signal['signal'],
+                    confidence=trading_signal['confidence'],
+                    features=analysis_result
                 )
                 
                 predictions = pd.concat([predictions, pd.DataFrame([{
                     'symbol': symbol,
-                    'prediction': prediction,
-                    'confidence': confidence
+                    'prediction': trading_signal['signal'],
+                    'confidence': trading_signal['confidence'],
+                    'risk_level': trading_signal['risk_level'],
+                    'position_size': trading_signal['position_size'],
+                    'stop_loss': trading_signal['stop_loss'],
+                    'take_profit': trading_signal['take_profit']
                 }])], ignore_index=True)
             
             self.console.success(f"KI-Analyse abgeschlossen für {total_symbols} Symbole")
@@ -268,7 +350,14 @@ class AnalysisPipeline:
 
     def _extract_features(self, data):
         """Extrahiert Features für das KI-Modell"""
+        symbol = data['symbol'].iloc[0]  # Hole das Symbol aus den Daten
+        
         features = {
+            'metadata': {
+                'symbol': symbol,
+                'analysis_timestamp': datetime.now().isoformat(),
+                'data_points': len(data)
+            },
             'price_stats': {
                 'close_mean': float(data['close'].mean()),
                 'close_std': float(data['close'].std()),
@@ -277,6 +366,40 @@ class AnalysisPipeline:
                 'low_min': float(data['low'].min())
             }
         }
+        
+        # News-Daten hinzufügen, falls vorhanden
+        if 'news_titles' in data.columns and 'avg_sentiment' in data.columns:
+            # Filtere Zeilen mit News
+            news_data = data[data['news_titles'].notna()]
+            
+            # Verarbeite die neuesten News-Daten
+            latest_news = {}
+            if not news_data.empty and news_data['news_titles'].iloc[0]:
+                # Extrahiere alle News-Komponenten
+                titles = news_data['news_titles'].iloc[0].split(' ||| ')
+                descriptions = news_data['news_descriptions'].iloc[0].split(' ||| ') if news_data['news_descriptions'].iloc[0] else []
+                urls = news_data['news_urls'].iloc[0].split(' ||| ') if news_data['news_urls'].iloc[0] else []
+                sentiments = [float(s) for s in news_data['news_sentiments'].iloc[0].split(' ||| ')] if news_data['news_sentiments'].iloc[0] else []
+                
+                # Kombiniere die Daten
+                latest_news = {
+                    'articles': [
+                        {
+                            'title': title,
+                            'description': desc if i < len(descriptions) else None,
+                            'url': url if i < len(urls) else None,
+                            'sentiment': sent if i < len(sentiments) else None
+                        }
+                        for i, (title, desc, url, sent) in enumerate(zip(titles, descriptions, urls, sentiments))
+                    ]
+                }
+            
+            features['news_stats'] = {
+                'sentiment_mean': float(news_data['avg_sentiment'].mean()) if not news_data.empty and not pd.isna(news_data['avg_sentiment'].mean()) else 0.0,
+                'sentiment_std': float(news_data['avg_sentiment'].std()) if not news_data.empty and not pd.isna(news_data['avg_sentiment'].std()) else 0.0,
+                'volume': int(news_data['news_count'].sum()) if not news_data.empty else 0,
+                'latest_news': latest_news
+            }
         
         # Technische Features hinzufügen, falls vorhanden
         tech_cols = data.filter(like='technical_').columns
@@ -291,46 +414,94 @@ class AnalysisPipeline:
         confidence = 1 / (1 + np.exp(-abs(prediction)))
         return float(confidence)
 
-    def _extract_prediction_value(self, model_output: str) -> float:
-        """Extrahiert den numerischen Vorhersagewert aus der Modellausgabe."""
+    def _extract_prediction_value(self, model_output: str) -> dict:
+        """Extrahiert die strukturierte Analyse aus der Modellausgabe."""
         try:
-            # Versuche direkte Konvertierung
-            return float(model_output)
-        except ValueError:
-            # Suche nach dem ersten numerischen Wert in der Ausgabe
-            import re
-            numbers = re.findall(r"[-+]?\d*\.\d+|\d+", model_output)
-            if numbers:
-                return float(numbers[0])
-            raise ValueError("Keine numerische Vorhersage gefunden")
+            # Finde das erste Dictionary in der Ausgabe
+            start_idx = model_output.find('{')
+            end_idx = model_output.rfind('}') + 1
+            if start_idx != -1 and end_idx != -1:
+                dict_str = model_output[start_idx:end_idx]
+                analysis = eval(dict_str)  # Sicher da wir kontrolliertes Format haben
+                
+                # Validiere das Format
+                required_keys = ['metadata', 'price_analysis', 'news_analysis', 'technical_analysis', 'combined_analysis']
+                if not all(key in analysis for key in required_keys):
+                    raise ValueError("Unvollständiges Analyse-Format")
+                
+                return analysis
+            raise ValueError("Keine gültige Analyse-Struktur gefunden")
+        except Exception as e:
+            self.logger.warning(f"Fehler bei der Analyse-Extraktion: {str(e)}")
+            # Gebe Standard-Analyse-Struktur zurück
+            return {
+                'metadata': {
+                    'symbol': 'UNKNOWN',
+                    'analysis_timestamp': datetime.now().isoformat(),
+                    'data_points': 0
+                },
+                'price_analysis': {
+                    'price_metrics': {'price_strength': 0, 'volatility_level': 0.5, 'volume_strength': 0,
+                                    'support_level': 0, 'resistance_level': 0},
+                    'trend_metrics': {'trend_direction': 0, 'trend_strength': 0, 'price_momentum': 0}
+                },
+                'news_analysis': {
+                    'overall_sentiment': {'sentiment_score': 0, 'sentiment_confidence': 0, 'sentiment_trend': 0},
+                    'news_relevance': {'volume_score': 0, 'freshness_score': 0, 'impact_score': 0},
+                    'key_events': {'has_earnings': False, 'has_guidance': False, 'has_merger': False,
+                                'has_regulatory': False, 'has_market_move': False}
+                },
+                'technical_analysis': {
+                    'indicators': {'rsi_signal': 0, 'macd_signal': 0, 'bb_signal': 0, 'ma_signal': 0},
+                    'patterns': {'trend_strength': 0, 'reversal_probability': 0, 'breakout_potential': 0}
+                },
+                'combined_analysis': {
+                    'overall_score': 0,
+                    'confidence_score': 0.5,
+                    'risk_level': 0.5,
+                    'position_advice': {'action': 'hold', 'size': 0, 'stop_loss': 0, 'take_profit': 0}
+                }
+            }
 
-    def _generate_predictions(self, data):
-        """Generiert Vorhersagen mit dem KI-Modell"""
-        predictions = pd.DataFrame()
-        for symbol in data['symbol'].unique():
-            symbol_data = data[data['symbol'] == symbol]
+    def _generate_trading_signal(self, analysis: dict) -> dict:
+        """Generiert ein Handelssignal aus der detaillierten Analyse."""
+        try:
+            # Extrahiere relevante Metriken
+            symbol = analysis['metadata']['symbol']
+            overall_score = analysis['combined_analysis']['overall_score']
+            confidence = analysis['combined_analysis']['confidence_score']
+            risk_level = analysis['combined_analysis']['risk_level']
+            position_advice = analysis['combined_analysis']['position_advice']
             
-            # Modellvorhersagen
-            features = self._extract_features(symbol_data)
-            inputs = self.tokenizer(str(features), return_tensors="pt").to(self.model.device)
-            outputs = self.model.generate(**inputs, max_length=100)
-            prediction = float(self.tokenizer.decode(outputs[0], skip_special_tokens=True))
-            confidence = self._calculate_confidence(prediction)
+            # Bestimme das Signal basierend auf dem Overall-Score
+            if abs(overall_score) < 0.2:  # Neutrale Zone
+                signal = 0
+            else:
+                signal = 1 if overall_score > 0 else -1
             
-            self.logger.log_prediction(
-                symbol=symbol,
-                prediction=prediction,
-                confidence=confidence,
-                features=features
-            )
-            
-            predictions = pd.concat([predictions, pd.DataFrame([{
+            return {
                 'symbol': symbol,
-                'prediction': prediction,
-                'confidence': confidence
-            }])], ignore_index=True)
-        
-        return predictions
+                'signal': signal,
+                'confidence': confidence,
+                'risk_level': risk_level,
+                'position_size': position_advice['size'],
+                'stop_loss': position_advice['stop_loss'],
+                'take_profit': position_advice['take_profit'],
+                'timestamp': analysis['metadata']['analysis_timestamp']
+            }
+            
+        except Exception as e:
+            self.logger.warning(f"Fehler bei der Signalgenerierung: {str(e)}")
+            return {
+                'symbol': 'UNKNOWN',
+                'signal': 0,
+                'confidence': 0.5,
+                'risk_level': 0.5,
+                'position_size': 0,
+                'stop_loss': 0,
+                'take_profit': 0,
+                'timestamp': datetime.now().isoformat()
+            }
 
     def _generate_signals(self, data, predictions):
         """Generiert Handelssignale basierend auf Vorhersagen"""
@@ -386,4 +557,5 @@ class AnalysisPipeline:
 
 if __name__ == "__main__":
     pipeline = AnalysisPipeline()
+    pipeline.run_analysis() 
     pipeline.run_analysis() 
