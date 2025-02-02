@@ -10,7 +10,6 @@ class RiskManager:
         self.initial_capital = initial_capital
         self.risk_parameters = self._load_risk_parameters()
         self.logger = AILogger(name="risk_manager")
-        self.console = ConsoleLogger(name="risk_manager")
         
         # Log initial risk parameters
         self.logger.log_model_metrics(
@@ -22,16 +21,16 @@ class RiskManager:
         )
         
         # Konsolen-Ausgabe der Initialisierung
-        self.console.section("Risikomanager Initialisierung")
-        self.console.info(f"Initiales Kapital: {self.initial_capital:,.2f} EUR")
-        self.console.info("Risikoparameter:")
+        self.logger.section("Risikomanager Initialisierung")
+        self.logger.info(f"Initiales Kapital: {self.initial_capital:,.2f} EUR")
+        self.logger.info("Risikoparameter:")
         for key, value in self.risk_parameters.items():
             if key != 'sector_limits':
-                self.console.info(f"  - {key}: {value}")
+                self.logger.info(f"  - {key}: {value}")
             else:
-                self.console.info("  - Sektor-Limits:")
+                self.logger.info("  - Sektor-Limits:")
                 for sector, limit in value.items():
-                    self.console.info(f"    * {sector}: {limit:.1%}")
+                    self.logger.info(f"    * {sector}: {limit:.1%}")
         
     def _load_risk_parameters(self) -> Dict:
         """Lädt Risikoparameter aus der Datenbank"""
@@ -68,12 +67,12 @@ class RiskManager:
         )
         
         # Konsolen-Ausgabe der Positionsgrößenberechnung
-        self.console.info("\nPositionsgrößenberechnung:")
-        self.console.info(f"  Entry Preis: {entry_price:.2f}")
-        self.console.info(f"  Stop Loss: {stop_loss:.2f}")
-        self.console.info(f"  Risiko pro Aktie: {risk_per_share:.2f}")
-        self.console.info(f"  Maximales Risiko: {max_risk_amount:.2f}")
-        self.console.info(f"  Berechnete Positionsgröße: {position_size:.2f}")
+        self.logger.info("\nPositionsgrößenberechnung:")
+        self.logger.info(f"  Entry Preis: {entry_price:.2f}")
+        self.logger.info(f"  Stop Loss: {stop_loss:.2f}")
+        self.logger.info(f"  Risiko pro Aktie: {risk_per_share:.2f}")
+        self.logger.info(f"  Maximales Risiko: {max_risk_amount:.2f}")
+        self.logger.info(f"  Berechnete Positionsgröße: {position_size:.2f}")
         
         return position_size
 
@@ -90,7 +89,7 @@ class RiskManager:
             }
         )
         
-        self.console.info("Stop-Loss-Berechnung deaktiviert")
+        self.logger.info("Stop-Loss-Berechnung deaktiviert")
         return stop_loss
 
     def portfolio_risk_check(self, current_positions: dict) -> bool:
@@ -104,8 +103,8 @@ class RiskManager:
             }
         )
         
-        self.console.info("Risiko-Checks sind deaktiviert")
-        self.console.success("Risiko-Check übersprungen")
+        self.logger.info("Risiko-Checks sind deaktiviert")
+        self.logger.success("Risiko-Check übersprungen")
         
         return True
 
@@ -137,5 +136,5 @@ class RiskManager:
             }
         )
         
-        self.console.info("Marktexpositions-Berechnung deaktiviert")
+        self.logger.info("Marktexpositions-Berechnung deaktiviert")
         return exposure 
