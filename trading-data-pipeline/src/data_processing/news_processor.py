@@ -10,7 +10,7 @@ def add_sentiment(df: pd.DataFrame) -> pd.DataFrame:
     logger.info(f"Starte Sentiment-Analyse für {len(df)} Nachrichtentitel")
     
     try:
-        df["sentiment"] = df["title"].apply(lambda x: sia.polarity_scores(x)["compound"])
+        df["sentiment"] = df["title"].apply(lambda x: sia.polarity_scores(x)["compound"] if x else 0)
         
         # Logge Verteilung der Sentiments
         positive = len(df[df["sentiment"] > 0])
